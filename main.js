@@ -187,7 +187,7 @@ $(function() {
             for (i = 0; i < window.ls.nWarders; i++) window.ls.aWarders[i].update(distEnemy);
             if(!window.stageData.bonus.active)
                 {
-                    if(window.stageData.cum_area<50) window.stageData.bonus = BonusItem.random(5, 5, window.cellset.nW-5, window.cellset.nH-5, 'sneaky')
+                    if(window.stageData.cum_area<50) window.stageData.bonus = BonusItem.random(5, 5, window.cellset.nW-5, window.cellset.nH-5, 'tank')
                 }
             return true;
         }

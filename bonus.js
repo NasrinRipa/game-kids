@@ -11,13 +11,13 @@ export class BonusItem {
 
     static alwaysBonus= true;
     static random(minX = 0, minY = 0, maxX = 600, maxY = 400, bonus = 'random') {
-        const types = ['speed', 'slow', 'sneaky', 'killward', 'life', 'freez'];
+        const types = ['speed', 'slow', 'sneaky', 'killward', 'life', 'freez', 'tank'];
         const x = Math.floor(Math.random() * (maxX - minX)) + minX;
         const y = Math.floor(Math.random() * (maxY - minY)) + minY;
         const index = Math.floor(Math.random() * types.length);
         const type = bonus === 'random' ? types[index] : bonus;
         // Ensure bonus values array matches types length
-        const bonusValues = [5, 5, 7, 1, 3, 2];
+        const bonusValues = [5, 5, 7, 1, 3, 2, 5];
         const bonusValue = bonus === 'random' ? bonusValues[index] : 5;
         return new BonusItem(x, y, type, bonusValue, true);
     }
@@ -29,6 +29,7 @@ export class BonusItem {
         if (this.type === 'killward') return '#FFFF00'; // yellow for killward
         if (this.type === 'life') return '#00FFFF'; // cyan for extra life
         if (this.type === 'freez') return '#ccaaaa'; // blue for freez
+         if (this.type === 'tank') return '#1417a5ff'; // blue for freez
         return '#FFFFFF'; // white for error
     }
 
@@ -121,13 +122,30 @@ export class BonusItem {
             if (gs) gs.nFaults = (gs.nFaults || 0) + 1;
             bonus_text = 'Bonus - Extra Life';
         }else if (this.type === 'freez'){
-            var saved_speedEnemyReduce = ls.speedEnemyReduce;
-            ls.speedEnemyReduce = ls.speedEnemy
+            bonus_text = 'Bonus - Frozen';
+            if(ls.speedEnemyReduce != ls.speedEnemy){
+                var saved_speedEnemyReduce = ls.speedEnemyReduce;
+                ls.speedEnemyReduce = ls.speedEnemy
+
+                // # after 5 second return to same
+                setTimeout(() => {
+                    ls.speedEnemyReduce = saved_speedEnemyReduce;
+                }, this.bonusValue*1000);
+
+            }
+
+        }else if (this.type === 'tank'){
+            if(ls.tankmode === false){
+                ls.tankmode = true;
+                // window.cellset.clearTrail();
+                setTimeout(() => {
+                    ls.tankmode = false;
+                }, this.bonusValue*1000);
+
+            }
             bonus_text = 'Bonus - Frozen';
             // # after 5 second return to same
-            setTimeout(() => {
-                ls.speedEnemyReduce = saved_speedEnemyReduce;
-            }, this.bonusValue*1000);
+
         }
         $('#banner').html(bonus_text);
         // return to banner after 2 sec

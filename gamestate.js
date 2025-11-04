@@ -53,6 +53,7 @@ export class LevelState{
         this.ignoreCollisionBonus = false;
         this.aBalls = [];
         this.aWarders = [];
+        this.tankmode = false;
 
         };
         get_image(onload, onerror){
@@ -222,7 +223,8 @@ export class GameState {
         aPos = window.cellset.placeWarders(window.ls.nWarders);
         for (i = 0; i < window.ls.nWarders; i++)
             window.ls.aWarders.push(new Enemy(aPos[i][0], aPos[i][1], true, 45));
-        window.stageData.bonus = BonusItem.random(5, 5, window.cellset.nW-5, window.cellset.nH-5, 'random')
+        window.stageData.bonus = new BonusItem(0,0,'tank',5,true);
+        //  BonusItem.random(5, 5, window.cellset.nW-5, window.cellset.nH-5, 'random')
         window.gs.tLevel = Date.now();
         window.gs.tLastFrame = 0;
         this.startLoop();

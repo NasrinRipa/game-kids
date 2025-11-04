@@ -286,7 +286,7 @@ window.fn_spawn = function() {
 
 window.fn_loop = function(now) {
         var dt = window.gs.tLastFrame? (now - window.gs.tLastFrame) / 1000 : 0;
-        console.log(window.gs.tLastFrame , dt)
+        // console.log(window.gs.tLastFrame , dt)
         window.gs.bCollision = window.gs.bConquer = false;
 
         var need_render = !window.gs.tLastFrame || window.fn_update(dt) && window.gs.bPlay
@@ -294,7 +294,7 @@ window.fn_loop = function(now) {
         if (need_render)
             {
                 window.render();
-                console.log('---------------------------------------------------------rendered')
+                // console.log('---------------------------------------------------------rendered')
             }
         if(need_timeUpdate) window.gs.tLastFrame = now;
         if (window.gs.bCollision) {

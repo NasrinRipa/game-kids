@@ -154,6 +154,7 @@ export class CellSet {
 
     add2Trail(x, y, dir) {
         var i = this.setOn(x, y, window.CA_TRAIL);
+        console.log('add to trail', x, y, i);
         if (i < 0) return;
         var n = this.aTrail.length;
         if (!n || dir !== this.dirTrail) {
@@ -178,11 +179,29 @@ export class CellSet {
         ];
     }
 
-    clearTrail() {
-        this.aTrailRects = this._buildTrailRects();
+    clearTrail(clear_graphics = false) {
+        // Clear trail cells first. If clear_graphics is true this means
+        // tank mode or forced clearing: mark those cells as conquered
+        // (set CA_CLEAR) so enemies treat them as cleared.
         for (var n = this.aTrail.length, i = 0; i < n; i++) {
-            this.aCells[this.aTrail[i]] &= ~window.CA_TRAIL;
+            var idx = this.aTrail[i];
+            // position before we change the cell state
+            var pos = this.pos(idx);
+            var prev = this.aCells[idx];
+            // remove trail flag
+            this.aCells[idx] &= ~window.CA_TRAIL;
+            if (clear_graphics) {
+                // if cell was not already marked clear, mark it and count it
+                if (!(prev & window.CA_CLEAR)) {
+                    this.aCells[idx] |= window.CA_CLEAR;
+                    this.nConquered++;
+                }
+                window.gs.clearCellArea(pos[0], pos[1], 1, 1);
+                console.log('clear trail cell', pos[0], pos[1]);
+            }
         }
+        // After all cells are cleared, reset trail state
+        this.aTrailRects = [];
         this.aTrail = []; this.aTrailNodes = [];
     }
 
@@ -195,7 +214,7 @@ export class CellSet {
         var nTrail = this.aTrail.length;
         if (!nTrail) return new Array(points.length).fill(false);
         if (nTrail > 1)
-            this.aTrailNodes.push(this.aTrail[nTrail-1]);
+            this.aTrailNodes.push(this.aTrail[nTrail-1]);// add last point as node
         var aConqRects = this._conquer() || this._buildTrailRects();
         this.aTrail = []; this.aTrailNodes = [];
         if (!aConqRects || !aConqRects.length) return new Array(points.length).fill(false);
@@ -467,7 +486,8 @@ export class CellSet {
                 if (dir != window.var_dirset.find(posT2[0]-posB2[0], posT2[1]-posB2[1])) continue;
                 var dirTest = Math.floor((window.var_dirset.find(posB2[0]-posB1[0], posB2[1]-posB1[1])+ dir) / 2);
                 var vec = window.var_dirset.get(dirTest - dirTest% 45);
-                if (this.value([posB1[0]+ vec[0], posB1[1]+ vec[1]]) & window.CA_CLEAR) continue;
+                // pass x and y as separate arguments (was passing an array by mistake)
+                if (this.value(posB1[0] + vec[0], posB1[1] + vec[1]) & window.CA_CLEAR) continue;
                 var b = false, t, w, k;
                 if ((t = Math.abs(posB1[0]-posB2[0])) > dim1) {
                     b = true; k = 0; w = t;

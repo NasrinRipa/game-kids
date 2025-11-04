@@ -8,6 +8,7 @@ export class Cursor {
         this.dir = false; // current movement direction (angle in degrees)
         this.onTrail = false; // current state (true - trial)
         this.onTrail0 = false; // previous state
+        this._tankTrailConverted = false; // when in tank mode, whether existing trail cells were converted to cleared
     }
 
     // reset the cursor position:
@@ -23,33 +24,142 @@ export class Cursor {
     // update current position - move by given distance:
     update(dist) {
         if (this.dir === false) return;
+        // local refs
+        var cs = window.cellset;
+        var gs = window.gs;
+        var ls = window.ls;
+        var tank = ls && ls.tankmode;
+
         var x = this.x, y = this.y;
         var vec = window.var_dirset.get(this.dir), vecX = vec[0], vecY = vec[1];
-        var bEnd =  false;
+        var bEnd = false;
+
+        // Ensure dist is a non-negative integer
+        dist = Math.max(0, Math.floor(dist));
+
+
         for (var n = 0; n < dist; n++) {
-            if (window.cellset.index(x + vecX, y + vecY) < 0) {
+            var nx = x + vecX, ny = y + vecY;
+            if (cs.index(nx, ny) < 0) {
+                // out of valid grid — stop movement
                 this.dir = false; break;
             }
-            x += vecX; y += vecY;
-            if ((window.cellset.value(x, y) & window.CA_TRAIL)) {
-                window.gs.bCollision = true; break;
+
+            // Inspect the next cell before committing the move
+            var nextVal = cs.value(nx, ny);
+            var nextCleared = Boolean(nextVal & window.CA_CLEAR);
+            var nextTrail = Boolean(nextVal & window.CA_TRAIL);
+
+            if (tank) {
+                // Tank mode behavior:
+                // - If next cell is cleared: finalize/conquer current trail
+                // - If next cell is a trail cell (crossing): finalize/conquer
+                // - Otherwise (regular cell): elongate trail, and convert trail cells to cleared
+                if (nextCleared) {
+                    if (this.onTrail) {
+                        // finalize trail — let post-loop logic handle conquer
+                        bEnd = true;
+                        break;
+                    }
+                    // moving into an already cleared cell when not on a trail: just move
+                    x = nx; y = ny;
+                    // mark the new cell cleared (tank clears as it moves)
+                    if (!(cs.value(x, y) & window.CA_CLEAR)) {
+                        cs.set(x, y, window.CA_CLEAR);
+                        window.gs.clearCellArea(x, y, 1, 1);
+                        cs.nConquered++;
+                        // console.log('Tank mode conquered cell:', x, y);
+                    }
+                    continue;
+                }
+
+                if (nextTrail) {
+                    // Crossing own path in tank mode -> finalize trail / conquer
+                    if (this.onTrail) {
+                        bEnd = true;
+                        break;
+                    }
+                    // If not currently on a trail, treat as normal move into a trail cell
+                    // but convert it immediately
+                    x = nx; y = ny;
+                    if (!(cs.value(x, y) & window.CA_CLEAR)) {
+                        cs.set(x, y, window.CA_CLEAR);
+                        window.gs.clearCellArea(x, y, 1, 1);
+                        cs.nConquered++;
+                    }
+                    continue;
+                }
+
+                // Regular cell in tank mode: elongate trail (so we keep track),
+                // but convert existing trail cells to cleared only once.
+                cs.add2Trail(nx, ny, this.dir);
+                this.onTrail = true;
+                // Convert previous trail cells to cleared on first tank move
+                if (!this._tankTrailConverted && cs.aTrail.length > 1) {
+                    for (var ti = 0; ti < cs.aTrail.length - 1; ti++) {
+                        var idx = cs.aTrail[ti];
+                        var prev = cs.aCells[idx];
+                        if (!(prev & window.CA_CLEAR)) {
+                            cs.aCells[idx] |= window.CA_CLEAR;
+                            cs.nConquered++;
+                            var ppos = cs.pos(idx);
+                            window.gs.clearCellArea(ppos[0], ppos[1], 1, 1);
+                        }
+                    }
+                    this._tankTrailConverted = true;
+                }
+                // Also mark the newly added cell as cleared immediately
+                var lastIdx = cs.aTrail[cs.aTrail.length - 1];
+                if (lastIdx !== undefined) {
+                    var prev2 = cs.aCells[lastIdx];
+                    if (!(prev2 & window.CA_CLEAR)) {
+                        cs.aCells[lastIdx] |= window.CA_CLEAR;
+                        cs.nConquered++;
+                        var ppos2 = cs.pos(lastIdx);
+                        window.gs.clearCellArea(ppos2[0], ppos2[1], 1, 1);
+                    }
+                }
+
+                // commit move
+                x = nx; y = ny;
+                continue;
+            } // end tank handling
+
+            // Non-tank mode processing
+            if (nextTrail) {
+                // Collision with own trail
+                gs.bCollision = true;
+                break;
             }
-            var b = window.cellset.value(x, y) & window.CA_CLEAR;
-            if (this.onTrail && b) {
-                bEnd = true; break;
+
+            if (nextCleared) {
+                // Moving into cleared cell finalizes the trail
+                if (this.onTrail) {
+                    bEnd = true;
+                    break;
+                }
+                // Not on a trail: just move into cleared cell
+                x = nx; y = ny;
+                this.onTrail = false;
+                continue;
             }
-            this.onTrail = !b;
-            if (this.onTrail) window.cellset.add2Trail(x, y, this.dir);
+
+            // Regular non-tank cell: elongate trail
+            cs.add2Trail(nx, ny, this.dir);
+            this.onTrail = true;
+            x = nx; y = ny;
         }
-        this.x = x;
-        this.y = y;
-        // console.log('Cursor',this.x, this.y)
+
+        this.x = x; this.y = y;
         if (!bEnd) return;
-        if ((window.cellset.getPreTrailCell() == window.cellset.index(x,y)))
-            window.gs.bCollision = true;
+        // If we've finalized a trail (either tank or normal), reset tank conversion flag
+        this._tankTrailConverted = false;
+        // If in tank mode we would have exited earlier; here we're normal mode
+        if ((cs.getPreTrailCell() == cs.index(x, y)))
+            gs.bCollision = true;
         else {
             this.dir = this.onTrail = false;
-            window.gs.bConquer = true;
+            gs.bConquer = true;
         }
     }
 
