@@ -1,384 +1,239 @@
-import { Enemy } from './enemy.js';
-import { BonusItem } from './bonus.js';
-import { CellSet } from './cellset.js';
-import { Cursor } from './cursor.js';
+﻿/**
+ * Shared game singleton and core state classes.
+ * All modules import `game` from here instead of using window globals.
+ */
 
-export class GameDef {
+/**
+ * Mutable shared state passed between all game modules at runtime.
+ * Set up by the engine (picxonix.js) before any game starts.
+ */
+export const game = {
+    config:  null,   // GameConfig instance
+    state:   null,   // GameState instance
+    level:   null,   // LevelConfig instance
+    grid:    null,   // Grid instance  (playing field)
+    cursor:  null,   // Cursor instance
+    bonus:   null,   // Bonus instance
+
+    /** Sprite images pre-rendered onto temporary canvases. */
+    images: { cursor: null, ball: null, warder: null },
+
+    /** Raw settings loaded from settings.json (the top-level "game" object). */
+    settingsData: null,
+
+    /** Level definitions loaded from settings.json. */
+    levelsData: [],
+
+    /** The DOM <div> that holds all game canvases. */
+    wrapEl: null,
+
+    /** Sub-pixel movement accumulators (carry the fractional part across frames). */
+    cursorMoveAcc: 0,
+    enemyMoveAcc:  0,
+
+    /** Cumulative cleared-area percentage used for incremental score calculation. */
+    clearedArea: 0,
+
+    /** Tracks which conquest milestone percentages have been shown this level. */
+    bannerMilestones: null,
+
+    /** True while a timed bonus effect (speed, slow, sneaky, freez, tank) is still active. */
+    bonusTimerActive: false,
+
+    /** Timestamp (Date.now()) when the current timed bonus expires; 0 when inactive. */
+    bonusTimerExpiresAt: 0,
+
+    /** Handles for active timed-effect setTimeouts; cleared on level end. */
+    activeEffectTimers: [],
+
+    /** Cleanup callbacks for active timed effects; invoked on forced cancellation. */
+    activeEffectCleanups: [],
+
+    /** True when a conquest was triggered while sneaky (invincible) mode was active. */
+    sneakyConquer: false,
+
+    /**
+     * The main game-loop function.
+     * Set by the engine before the first loop starts so GameState.startLoop()
+     * can reference it without a circular import.
+     */
+    loopFn: null,
+
+    /**
+     * UI callbacks populated by main.js.
+     * The engine calls these to update the DOM without importing main.js.
+     */
+    ui: {
+        setBanner:        (_text)            => {},
+        updateStatus:     (_stage)           => {},
+        onLevelComplete:  ()                 => {},
+        onFault:          ()                 => {},
+        showBonusCaptured:(_type, _hasTimer, _dur, _isEffectActive, _getRemainingMs) => {},
+        showReady:        ()                 => {},
+        showGoOn:         ()                 => {},
+        showReadyToLevel: ()                 => {},
+        showLevelComplete:()                 => {},
+        showGameOver:     ()                 => {},
+        showCongrats:     (_isLastLevel)     => {},
+        showOops:         ()                 => {},
+        showPaused:       ()                 => {},
+        showConquer:      (_delta, _halfway, _opts) => {},
+    },
+};
+
+// ─── GameConfig ───────────────────────────────────────────────────────────────
+
+/** Immutable game-wide configuration (canvas size, colours, timing, levels). */
+export class GameConfig {
     constructor() {
-        console.log('Creating Game definition');
-        this.sizeCell = 10;
-        this.aLevels =  [
-                        {"image": "pic1.png"},
-                        {"image": "pic2.png"},
-                        {"image": "pic3.png"}
-                        ];
+        this.gridCols = 60;   // playfield width in cells
+        this.gridRows = 40;   // playfield height in cells
+        this.cellSize = 10;
 
-        this.cfgMain = {
-            width: 600,
-            height: 400,
-            sizeCell: 10,
-            colorFill: '#000000',
-            colorBorder: '#00aaaa',
-            colorBall: '#ffffff',
-            colorBallIn: '#000000',
-            colorWarder: '#000000',
-            colorWarderIn: '#f80000',
-            colorCursor: '#aa00aa',
-            colorCursorIn: '#00aaaa',
-            colorTrail: '#a800a8',
-            timeoutCollision: 1000,
-            callback: null,
-            callbackOnFrame: false,
-            collisionAdjacent: false
-        };
-        };
-        // property to return nH = height  / cell size
-    get nH() {
-        return Math.floor(this.cfgMain.height / this.cfgMain.sizeCell);
-    }
-    get nW(){
-        return Math.floor(this.cfgMain.width / this.cfgMain.sizeCell);
+        /** Available level definitions — populated at runtime from settings.json. */
+        this.levels = [];
+
+        /** Folder containing level background images. */
+        this.imageFolder = 'pics';
+
+        /** Starting lives for each new game. */
+        this.initialLives = 3;
+
+        /** Whether to show the status bar in fullscreen mode. */
+        this.fullscreenStatusbar = true;
+
+        /** Stop the cursor when tank mode expires by timer (no conquest). */
+        this.tankAutoStop = true;
+
+        // ── Colours ──────────────────────────────────────────────────────────
+        this.colorEmpty         = '#000000';   // unexplored cell interior
+        this.colorBorder        = '#00aaaa';   // border ring / warder background
+        this.colorBall          = '#ffffff';   // ball outer ring
+        this.colorBallCenter    = '#000000';   // ball inner dot
+        this.colorWarder        = '#000000';   // warder outer square
+        this.colorWarderCenter  = '#f80000';   // warder inner square
+        this.colorCursor        = '#aa00aa';   // cursor outer square
+        this.colorCursorCenter  = '#00aaaa';   // cursor inner square
+        this.colorCursorEffect  = '#ffffff';   // cursor color during timed bonuses
+        this.colorTrail         = '#a800a8';   // active trail line
     }
 
+    /** Canvas pixel width (grid columns × cell size). */
+    get canvasWidth()  { return this.gridCols * this.cellSize; }
+
+    /** Canvas pixel height (grid rows × cell size). */
+    get canvasHeight() { return this.gridRows * this.cellSize; }
 }
 
-export class LevelState{
-    constructor(iLevel) {
-        this.iLevel = iLevel;
-        this.nBalls = 5;
-        this.nWarders = 1;
-        this.target_area = 80;
-        this.speedEnemy = 10;
-        this.speedEnemyReduce = 0;
-        this.ignoreCollisionBonus = false;
-        this.aBalls = [];
-        this.aWarders = [];
-        this.tankmode = false;
+// ─── LevelConfig ─────────────────────────────────────────────────────────────
 
-        };
-        get_image(onload, onerror){
-            var img = new Image();
-            img.onload = onload ;
-            img.onerror = onerror;
-            img.src = 'pics/pic' + this.iLevel + '.png';
-            return img;}
-        loadImgwithLevel(){
-            var img = new Image();
-            img.onload = function(){window.gs.applyLevel(img)} ;
-            img.onerror = function(){console.log('Error loading Image')};
-            img.src = 'pics/pic' + this.iLevel + '.png';
-        }
+/** Mutable per-level state: enemy counts, speeds, and active object lists. */
+export class LevelConfig {
+    constructor(levelIndex, imageFile = null) {
+        this.levelIndex        = levelIndex;
+        this.ballCount         = 0;
+        this.warderCount       = 1;
+        this.targetAreaPercent = 80;   // % of field to clear to win the level
+        this.enemySpeed        = 10;   // base enemy movement speed (cells/sec)
+        this.enemySlowdown     = 0;    // speed reduction applied by bonuses
+        this.isInvincible      = false; // true → enemy collisions are ignored
+        this.balls             = [];
+        this.warders           = [];
+        this.tankMode          = false; // cursor clears trail as it moves
+        this.imageFile         = imageFile; // image filename for this level
     }
 
+    /** Load the background image for this level; calls onLoad(img) on success. */
+    loadImage(onLoad) {
+        const img    = new Image();
+        img.onload   = () => onLoad(img);
+        img.onerror  = () => console.error(`Failed to load image for level ${this.levelIndex} (file: ${this.imageFile})`);
+        const folder = (game.config && game.config.imageFolder) ? game.config.imageFolder : 'pics';
+        img.src      = `${folder}/${this.imageFile ?? 'pic' + this.levelIndex + '.png'}`;
+    }
+}
 
+// ─── GameState ────────────────────────────────────────────────────────────────
+
+/** Mutable game-wide runtime state plus canvas-drawing helpers. */
 export class GameState {
-    constructor(gamedef) {
-        // for system
-        console.log('Constructing GameState');
-        this.nLevels = gamedef.aLevels.length;
-        this.iLevel = 0;
-        this.tLevel = 0;
-        this.nTimeLevel = 0;
-        this.nTimeTotal = 0;
-        this.bStarted = false;
-        this.bPlay = false;
-        this.bConquer = false;
-        this.bCollision = false;
-        // runtime frame/timer fields
-        this.idFrame = 0;
-        this.tLastFrame = 0;
-        this.tLocked = 0;
-        // for player
-        this.score = 0;
-        this.level = 0;
-        this.speedCursor = 15;
-        this.speedBonus = 0;
-        this.nFaults = 3;
-        this.ctxMain = null;
-        this.ctxPic = null;
-        }
+    constructor(config) {
+        /** Keep a reference so canvas helpers don't need the global `game` object. */
+        this.config = config;
 
-     // global graphics functions
+        this.totalLevels          = config.levels?.length ?? 0;
+        this.levelIndex           = 0;
+
+        // Timing
+        this.levelStartTime       = 0;   // Date.now() timestamp when current level began
+        this.levelElapsedSeconds  = 0;   // seconds elapsed in the current level
+        this.totalElapsedSeconds  = 0;   // accumulated seconds across all completed levels
+
+        // Flags
+        this.isStarted    = false;
+        this.isPlaying    = false;
+        this.hasConquered = false;   // set by cursor logic; cleared each frame
+        this.hasCollision = false;   // set by cursor/enemy logic; cleared each frame
+
+        // Animation frame
+        this.animFrameId   = 0;
+        this.lastFrameTime = 0;   // rAF timestamp of the last rendered frame
+
+        // Player stats
+        this.score       = 0;
+        this.lives       = 3;
+        this.cursorSpeed = 15;
+        this.bonusSpeed  = 0;   // temporary speed bonus from bonus items
+
+        // 2D rendering contexts (set when canvases are created)
+        this.mainCtx = null;   // main game canvas (sprites, trail, border)
+        this.bgCtx   = null;   // background canvas (level image, revealed cells)
+    }
+
+    // ── Canvas Drawing Helpers ─────────────────────────────────────────────────
+    // All coordinates are in grid-cell units.  The playfield has a 2-cell border,
+    // so cell (x, y) maps to pixel ((x+2)*cellSize, (y+2)*cellSize).
+
+    /** Fill the entire main canvas with the border colour. */
     fillCanvas() {
-        const width = window.gd.cfgMain.width;
-        const height = window.gd.cfgMain.height;
-        const sizeCell = window.gd.cfgMain.sizeCell;
-        this.ctxMain.fillStyle = window.gd.cfgMain.colorBorder;
-        this.ctxMain.fillRect(0, 0, width+ 4*sizeCell, height+ 4*sizeCell);
-        }
-
-    drawCellImg(img, x, y) {
-        const sizeCell = window.gd.cfgMain.sizeCell;
-        this.ctxMain.drawImage(img,
-            0, 0, sizeCell, sizeCell,
-            (x+2)*sizeCell, (y+2)*sizeCell, sizeCell, sizeCell
-        );
+        const { canvasWidth: w, canvasHeight: h, cellSize: cs } = this.config;
+        this.mainCtx.fillStyle = this.config.colorBorder;
+        this.mainCtx.fillRect(0, 0, w + 4 * cs, h + 4 * cs);
     }
 
-    clearCellArea(x, y, w, h) {
-        const sizeCell = window.gd.cfgMain.sizeCell;
-        this.ctxMain.clearRect(
-            (x+2)*sizeCell, (y+2)*sizeCell, (w || 1)* sizeCell, (h || 1)* sizeCell
-        );
+    /** Draw a sprite image at grid cell (x, y). */
+    drawCellImage(img, x, y) {
+        const cs = this.config.cellSize;
+        this.mainCtx.drawImage(img, 0, 0, cs, cs, (x + 2) * cs, (y + 2) * cs, cs, cs);
     }
 
-    fillCellArea(color, x, y, w, h, opacity=1) {
-        const sizeCell = window.gd.cfgMain.sizeCell;
-        if(!this){
-            console.log('Context NOT FOUND')
-        }
-        if (opacity != 1) this.ctxMain.globalAlpha = opacity;
-        this.ctxMain.fillStyle = color;
-        this.ctxMain.fillRect(
-            (x+2)*sizeCell, (y+2)*sizeCell, (w || 1)* sizeCell, (h || 1)* sizeCell
-        );
-        if (opacity != 1) this.ctxMain.globalAlpha = 1;
+    /** Clear (erase) a rectangular block of cells, revealing the background image beneath. */
+    clearCells(x, y, w = 1, h = 1) {
+        const cs = this.config.cellSize;
+        this.mainCtx.clearRect((x + 2) * cs, (y + 2) * cs, w * cs, h * cs);
     }
 
-    create_imgbg(){
-        var width = window.gd.cfgMain.width;
-        var height = window.gd.cfgMain.height;
-        var sizeCell = window.gd.cfgMain.sizeCell;
-        var canvas = document.createElement('canvas');
-        this.ctxPic = canvas.getContext('2d');
-        console.log('Creating background image canvas');
-        canvas.width = width;
-        canvas.height = height;
-        canvas.style.position = 'absolute';
-        canvas.style.left = canvas.style.top = (2*sizeCell) + 'px';
-        this.ctxPic.fillStyle = gd.cfgMain.colorTrail;
-        this.ctxPic.fillRect(0, 0, width, height);
-        window.var_oWrap.appendChild(canvas);
-        console.log('Background image canvas created', 'Number of child:', window.var_oWrap.childElementCount);
-
-    }
-    create_maincanvas(reset=false){
-        const width = window.gd.cfgMain.width;
-        const height = window.gd.cfgMain.height;
-        const sizeCell = window.gd.cfgMain.sizeCell;
-        var canvas = document.createElement('canvas');
-        this.ctxMain = canvas.getContext('2d');
-        canvas.width = width+ 4*sizeCell;
-        canvas.height = height+ 4*sizeCell;
-        canvas.style.position = 'absolute';
-        canvas.style.left = canvas.style.top = 0;
-        this.fillCanvas();
-        this.ctxMain.fillStyle = window.gd.cfgMain.colorFill;
-        this.ctxMain.fillRect(2*sizeCell, 2*sizeCell, width, height);
-        // if not reset append to oWrap
-        if (!reset){
-            window.var_oWrap.appendChild(canvas);
-            console.log('Main canvas created', 'Number of child:', window.var_oWrap.childElementCount);
-        }
+    /** Fill a rectangular block of cells with a solid colour (optional opacity). */
+    fillCells(color, x, y, w = 1, h = 1, opacity = 1) {
+        const cs  = this.config.cellSize;
+        const ctx = this.mainCtx;
+        if (opacity !== 1) ctx.globalAlpha = opacity;
+        ctx.fillStyle = color;
+        ctx.fillRect((x + 2) * cs, (y + 2) * cs, w * cs, h * cs);
+        if (opacity !== 1) ctx.globalAlpha = 1;
     }
 
-    startLevelStateCells(level){
-        this.iLevel = level || 0;
-        window.ls = new LevelState(this.iLevel)
-        window.var_cursorMoveRemainder = 0;
-        window.var_enemyMoveRemainder = 0;
-        window.cellset = window.cellset || new CellSet();
-        window.cellset.reset()
-        window.cursor = window.cursor || new Cursor();
-    }
+    // ── Animation Loop Control ─────────────────────────────────────────────────
 
-    resetCanvas(cause) {
-        this.setPlayMode(false);
-        this.endLevel(false);
-        // this.setLevelData(width, height);
-        //this.create_maincanvas(true)
-        // this.ctxPic.canvas.width = width;
-        // this.ctxPic.canvas.height = height;
-
-        window.update_status_bar(cause)
-    }
-    applyLevel(img) {
-        const width = window.gd.cfgMain.width;
-        const height = window.gd.cfgMain.height;
-        const sizeCell = window.gd.cfgMain.sizeCell;
-        var imgPic = img;
-        // merge(window.ls, data, true);
-        this.setLevelData(img.width, img.height);
-        window.gs.ctxMain.canvas.width = width+ 4*sizeCell;
-        window.gs.ctxMain.canvas.height = height+ 4*sizeCell;
-        window.gs.fillCanvas();
-        window.cellset.reset();
-
-        this.ctxPic.canvas.width = width;
-        this.ctxPic.canvas.height = height;
-        this.ctxPic.drawImage(imgPic, 0, 0, width, height, 0, 0, width, height);
-        // window.gd.cfgMain.callback && window.gd.cfgMain.callback(3);
-        // if (data.disabled) {
-        //     endLevel(true); return;
-        // }
-        // if ('shuffle' in data)
-        //     shuffleImage(data.shuffle);
-        var pos = window.cellset.placeCursor();
-        window.cursor.reset(pos[0], pos[1]);
-        window.ls.aBalls = []; window.ls.aWarders = [];
-        var i, aPos;
-        aPos = window.cellset.placeBalls(window.ls.nBalls);
-        for (i = 0; i < window.ls.nBalls; i++)
-            window.ls.aBalls.push(new Enemy(aPos[i][0], aPos[i][1], false));
-        aPos = window.cellset.placeWarders(window.ls.nWarders);
-        for (i = 0; i < window.ls.nWarders; i++)
-            window.ls.aWarders.push(new Enemy(aPos[i][0], aPos[i][1], true, 45));
-        window.stageData.bonus = new BonusItem(0,0,'tank',5,true);
-        //  BonusItem.random(5, 5, window.cellset.nW-5, window.cellset.nH-5, 'random')
-        window.gs.tLevel = Date.now();
-        window.gs.tLastFrame = 0;
-        this.startLoop();
-    }
-
-
-    endLevel(bClear) {
-        var sizeCell = window.gd.cfgMain.sizeCell;
-        var width = window.gd.cfgMain.width;
-        var height = window.gd.cfgMain.height;
-        this.endLoop();  // Stop the animation loop
-        window.gs.tLevel = 0;
-        window.gs.tLastFrame = 0;  // ADD THIS LINE - Reset frame tracker
-        window.gs.bCollision = false;  // ADD THIS LINE - Reset collision flag
-
-        window.gs.nTimeTotal += window.gs.nTimeLevel;
-        if (!bClear) return;
-        setTimeout(function() {
-            // Animate clearing the play area with a left-to-right sliding curtain over 2 seconds
-            // Cancel any previous clear animation
-            if (window.gs._clearAnimId) cancelAnimationFrame(window.gs._clearAnimId);
-            const ctx = window.gs.ctxMain;
-            const minmax = window.cellset.getMinxMaxx()
-            const startX = minmax[0]*sizeCell
-            const endX = minmax[1]*sizeCell
-            const totalW = endX-startX;
-            const totalH = height;
-            const duration = 2000; // milliseconds
-            const startTime = performance.now();
-
-            function step(now) {
-                const elapsed = now - startTime;
-                const t = Math.min(1, elapsed / duration);
-                const sweep = Math.ceil(totalW * t);
-
-                // Clear the swept area from the left edge up to current sweep width
-                ctx.clearRect(2*sizeCell+startX, 2*sizeCell, sweep, totalH);
-
-                if (t < 1) {
-                    window.gs._clearAnimId = requestAnimationFrame(step);
-                } else {
-                    // Ensure fully cleared and clear the anim id
-                    ctx.clearRect(2*sizeCell, 2*sizeCell, width, height);
-                    window.gs._clearAnimId = 0;
-                }
-            }
-
-            window.gs._clearAnimId = requestAnimationFrame(step);
-            window.postLevelComplete();
-        }, 700);
-
-
-    }
-
-    setLevelData(w, h) {
-        // if (w) width = w - w % (2*sizeCell);
-        // if (h) height = h - h % (2*sizeCell);
-        // if (window.ls.nBalls) window.ls.nBalls = window.ls.nBalls;
-        // if (window.ls.nWarders) window.ls.nWarders = window.ls.nWarders;
-    }
-
-    setPlayMode(bOn) {
-        if (bOn ^ !window.gs.tLastFrame) return;
-        window.gs.tLastFrame? this.endLoop() : this.startLoop();
-    }
-
-    setDir(key) {
-        if (!window.gs.tLastFrame) return;
-        var key_code_map = { 'left': 180, 'right': 0, 'up': 270, 'down': 90, 'stop':false };
-        if (key in key_code_map) window.cursor.setDir(key_code_map[key]);
-        // console.log('-------------------------------------------------------',key, key_code)
-    }
-
-    setDirToward(pos) {
-        const sizeCell = window.gd.cfgMain.sizeCell;
-        if (!window.gs.tLastFrame || !pos || pos.length < 2) return;
-        var xc = Math.floor(pos[0] / sizeCell) - 2,
-            yc = Math.floor(pos[1] / sizeCell) - 2;
-        var b = window.cellset.isPosValid(xc, yc);
-        if (!b) return;
-        var posCr = window.cursor.pos(), dirCr = window.cursor.getDir(), dir = false;
-        if (dirCr === false) {
-            var dx = xc - posCr[0], dy = yc - posCr[1],
-                dc = Math.abs(dx) - Math.abs(dy);
-            if (dc == 0) return;
-            dir = window.var_dirset.find(dx, dy);
-            if (dir % 90 != 0) {
-                var dir1 = dir-45, dir2 = dir+45;
-                dir = dir1 % 180 == 0 ^ dc < 0? dir1 : dir2;
-            }
-        }
-        else {
-            var delta = dirCr % 180? xc - posCr[0] : yc - posCr[1];
-            if (!delta) return;
-            dir = (delta > 0? 0 : 180) + (dirCr % 180? 0 : 90);
-        }
-        window.cursor.setDir(dir);
-    }
-
-    setCursorSpeed(v) {
-            if (v > 0) window.gs.speedCursor = v;
-        }
-
-    setEnemySpeed(v) {
-            if (typeof v === 'number' && v > 0) {
-                window.ls.speedEnemy = v;
-            }
-        }
-
+    /** Schedule the next animation frame.  No-op if no level is active. */
     startLoop() {
-        if (!window.gs.tLevel) return;
-        window.gs.idFrame = requestAnimationFrame(window.fn_loop);
-        }
-
-    endLoop() {
-        if (window.gs.idFrame) cancelAnimationFrame(window.gs.idFrame);
-        window.gs.tLastFrame = window.gs.idFrame = 0;
-        }
-
-    // The main animation loop
-    buildLevelState() {
-        return {
-            width: width+ 4*sizeCell,
-            height: height+ 4*sizeCell,
-            play: Boolean(window.gs.tLastFrame),
-            posCursor: window.cursor.pos(),
-            warders: window.ls.nWarders,
-            speedCursor: window.gs.speedCursor,
-            speedEnemy: window.ls.speedEnemy,
-            cleared: window.cellset.getConqueredRatio()
-        };
+        if (!this.levelStartTime) return;
+        this.animFrameId = requestAnimationFrame(game.loopFn);
     }
 
-    // shuffleImage(aData) {
-    //     if (aData.length < 3) return;
-    //     var aShuffle = aData.slice();
-    //     var wCell = aShuffle.shift();
-    //     var nShuffle = aShuffle.length;
-    //     var nCols = 2* Math.floor(width/ 2/ wCell);
-    //     var nRows = 2* Math.floor(height/ 2/ wCell);
-    //     var canvas = document.createElement('canvas');
-    //     var ctxTmp = canvas.getContext('2d');
-    //     canvas.width = wCell;
-    //     canvas.height = wCell;
-    //     for (var i = 0; i < nShuffle; i+=2) {
-    //         var ic1 = aShuffle[i], ic2 = aShuffle[i+1];
-    //         var x1 = ic1 % nCols * wCell, y1 = Math.floor(ic1 / nCols) * wCell;
-    //         var x2 = ic2 % nCols * wCell, y2 = Math.floor(ic2 / nCols) * wCell;
-    //         ctxTmp.drawImage(ctxPic.canvas, x1, y1, wCell, wCell, 0, 0, wCell, wCell);
-    //         ctxPic.drawImage(ctxPic.canvas, x2, y2, wCell, wCell, x1, y1, wCell, wCell);
-    //         ctxPic.drawImage(canvas, 0, 0, wCell, wCell, x2, y2, wCell, wCell);
-    //     }
-    // }
-
-
-    // class  end next
-};
+    /** Cancel the scheduled animation frame and reset timing fields. */
+    stopLoop() {
+        if (this.animFrameId) cancelAnimationFrame(this.animFrameId);
+        this.lastFrameTime = this.animFrameId = 0;
+    }
+}

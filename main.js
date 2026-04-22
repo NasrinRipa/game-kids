@@ -1,320 +1,480 @@
-import { GameDef, GameState, LevelState } from './gamestate.js';
-import * as pix from './picxonix.js'
-import { BonusItem } from './bonus.js';
-$(function() {
-    var elCanvas = $('#graphics');
-    // Cache commonly used DOM elements
-    var $playBtn = $('#play-btn');
-    var $banner = $('#banner');
-    var $gameStatusText = $('#game-status-text');
-    var $statusProgressCurrent = $('#status-progress-current');
-    pix.test_function()
-    function initUI(el){
-        console.log('initUI Must be called once');
-        window.var_oWrap = document.createElement('div');
-        window.var_oWrap.style.position = 'relative';
-        el.appendChild(window.var_oWrap);
-        console.log('oWrapAdded, number of child:', el.childElementCount);
+﻿/**
+ * main.js – UI layer
+ *
+ * Bootstraps the page, wires up all DOM event handlers, manages button/banner
+ * state, and registers UI callbacks with the game engine.
+ */
 
+import { game }                                          from './gamestate.js';
+import {
+    initWrapperEl,
+    newGame,
+    quitGame,
+    loadCurrentLevel,
+    loadLevels,
+    endLevel,
+    setCursorDirection,
+    setCursorDirectionToward,
+    flashEffect,
+} from './picxonix.js';
+import { LEVEL_COMPLETE_DISPLAY_DELAY, FAULT_DISPLAY_DELAY } from './constants.js';
+import { BannerController } from './banner.js';
+
+$(function () {
+
+    // ── DOM references ─────────────────────────────────────────────────────────
+    const $canvas        = $('#graphics');
+    const $playBtn       = $('#play-btn');
+    const $gameStatusTxt = $('#game-status-text');
+    const $levelDisplay  = $('#status-progress-current');
+
+    // ── Banner controller ───────────────────────────────────────────────────────
+    const bannerCanvas = document.getElementById('banner-canvas');
+    const fsBannerCanvas = document.getElementById('fs-banner-canvas');
+    const sidebarSpan  = document.getElementById('fs-s-banner');
+    const banner       = new BannerController(
+        bannerCanvas,
+        fsBannerCanvas,
+        sidebarSpan,
+        () => !!(game.state && game.state.isStarted && game.state.isPlaying)
+    );
+    banner.showReadyToStart();
+
+    // ── One-time setup ─────────────────────────────────────────────────────────
+    initWrapperEl($canvas[0]);
+    $('#status-progress-total').text(0);
+    $playBtn.prop('disabled', true);
+
+    loadLevels().then(() => {
+        $playBtn.prop('disabled', false);
+        banner.showReadyToStart();
+        updateLayout();
+    }).catch(err => {
+        console.error('Failed to load settings.json:', err);
+        $playBtn.prop('disabled', false);
+        banner.showReadyToStart();
+    });
+
+    $(window).on('resize', updateLayout);
+    document.addEventListener('fullscreenchange', updateLayout);
+    document.addEventListener('webkitfullscreenchange', updateLayout);
+
+    // Register UI callbacks so the engine can update the DOM.
+    game.ui.setBanner = (text) => {
+        banner.showText(text);
+    };
+
+    game.ui.showBonusCaptured = (type, hasTimer, durationSec, isEffectActive, getRemainingMs) =>
+        banner.showBonusCaptured(type, hasTimer, durationSec, isEffectActive, getRemainingMs);
+    game.ui.showReady    = () => banner.showReadyToStart();
+    game.ui.showGoOn     = () => banner.showGoOn();
+    game.ui.showReadyToLevel = () => banner.showReadyToLevel();
+    game.ui.showLevelComplete = () => banner.showLevelComplete();
+    game.ui.showGameOver = () => banner.showGameOver();
+    game.ui.showCongrats = (isLastLevel) => banner.showCongrats(isLastLevel);
+    game.ui.showOops     = () => banner.showOops();
+    game.ui.showPaused = () => banner.showPaused();
+    game.ui.showConquer = (deltaScore, showHalfway, opts) => banner.showConquer(deltaScore, showHalfway, opts);
+
+    game.ui.updateStatus = (stage) => {
+        if (stage === 'init' || stage === 'quit') {
+            $('#status-progress-current').text('-');
+            $('#status-time').text('--:--');
+            $('#status-points').text('-');
+            $('#status-speed').text('-');
+            $('#status-enemy').text('-');
+            $('#status-life').text('-');
+            $('#status-score').text('-');
+            $('#fs-s-level').text('-');
+            $('#fs-s-time').text('--:--');
+            $('#fs-s-points').text('-');
+            $('#fs-s-speed').text('-');
+            $('#fs-s-enemy').text('-');
+            $('#fs-s-life').text('-');
+            $('#fs-s-score').text('-');
+        } else {
+            const s = game.state, l = game.level;
+            $('#status-speed').text(s.cursorSpeed + s.bonusSpeed);
+            $('#status-enemy').text((l.enemySpeed - l.enemySlowdown).toFixed(1));
+            $('#status-life').text(s.lives);
+            $('#status-score').text(s.score.toFixed(0));
+            $('#fs-s-speed').text(s.cursorSpeed + s.bonusSpeed);
+            $('#fs-s-enemy').text((l.enemySpeed - l.enemySlowdown).toFixed(1));
+            $('#fs-s-life').text(s.lives);
+            $('#fs-s-score').text(s.score.toFixed(0));
+        }
+    };
+
+    game.ui.onLevelComplete = _onLevelComplete;
+    game.ui.onFault         = _onFault;
+
+    // ── Keyboard input ─────────────────────────────────────────────────────────
+    const KEY_DIRS = { 37: 'left', 39: 'right', 38: 'up', 40: 'down', 32: 'stop' };
+
+    $(document).keydown((e) => {
+        const key = e.which;
+
+        if (key === 13) {                     // Enter – start / next level
+            if (!$playBtn.prop('disabled')) {
+                e.preventDefault();
+                $playBtn.trigger('click');
+            }
+            return;
+        }
+
+        if (key === 81 || key === 113) {      // Q – quit to start screen
+            if (game.state?.isStarted || game.state?.isPlaying) {
+                e.preventDefault();
+                _quit();
+            }
+            return;
+        }
+
+        if (key === 27) {                     // Esc – pause / resume
+            if (game.state?.isStarted) {
+                game.state.isPlaying = !game.state.isPlaying;
+                if (game.state.isPlaying) {
+                    game.state.startLoop();
+                    banner.showGoOn();
+                } else {
+                    game.state.stopLoop();
+                    banner.showPaused();
+                }
+            }
+            return;
+        }
+
+        if (!game.state?.isPlaying || !(key in KEY_DIRS)) return;
+        e.preventDefault();
+        setCursorDirection(KEY_DIRS[key]);
+    });
+
+    // ── Canvas click → cursor direction ───────────────────────────────────────
+    $canvas.on('click', (e) => {
+        if (!game.state?.isPlaying) return;
+        const offset = $canvas.offset();
+        setCursorDirectionToward([e.pageX - offset.left, e.pageY - offset.top]);
+    });
+
+    // ── Play button ───────────────────────────────────────────────────────────
+    $playBtn.show().on('click', (e) => {
+        e.preventDefault();
+        _startNewGame();
+        _startLevel();
+    });
+
+    // ── Internal helpers ───────────────────────────────────────────────────────
+
+    function _startNewGame() {
+        newGame();
+        $('#status-progress-total').text(game.state.totalLevels);
     }
-    initUI(elCanvas[0]);
-    // var size = window.picxonix('init',elCanvas[0]);
-    // if (!size) return;
 
-    // var w = size.width, h = size.height;
-    // elCanvas.css({width: w, height: h});
+    function _startLevel() {
+        if (!game.level || game.level.levelIndex < 1) return;
 
+        // Update button area.
+        $playBtn.prop('disabled', true).hide();
+        $gameStatusTxt.show();
 
-    // window.gd = new GameDef();
-    // // Create global instance
-    // window.gs = new GameState(window.gd);
+        if (!game.state.isStarted) $('.my-panel').removeClass('hidden');
 
+        game.state.isStarted  = true;
+        game.state.isPlaying  = true;
+        game.state.hasConquered = false;
+        game.state.hasCollision = false;
 
-    $('#status-progress-total').html(0);
-    // preloadLevel();
+        $levelDisplay.text(game.state.levelIndex);
+        $('#fs-s-level').text(game.state.levelIndex + '/' + game.state.totalLevels);
 
-    var keyHash = {37: 'left', 39: 'right', 38: 'up', 40: 'down', 32: 'stop'};
-    $(document).keydown(function(e) {
-        var key = e.which;
+        banner.showGoOn();
 
-        // Enter key - Start/Next level
-        if (key == 13) {
-            if (!$playBtn.prop('disabled') && $playBtn.is(':visible')) {
-                e.preventDefault();
-                $playBtn.click();
-            }
-            return;
-        }
+        loadCurrentLevel();
+    }
 
-        // Q key - Quit to beginning
-        if (key == 81 || key == 113) { // Q or q
-            if (window.gs.bStarted || window.gs.bPlay) {
-                e.preventDefault();
-                quitPressed();
-            }
-            return;
-        }
+    function _quit() {
+        endLevel(false);
+        quitGame();
 
-        // ESC key - Pause/Resume
-        if (key == 27) {
-            if (window.gs.bStarted) {
-                window.gs.bPlay = !window.gs.bPlay;
-                window.gs.setPlayMode(window.gs.bPlay)
-            }
-            return;
-        }
-
-        if (!window.gs.bPlay || !(key in keyHash)) return;
-        e.preventDefault();
-        picxonix('cursorDir', keyHash[key]);
-    });
-
-    elCanvas.click(function(e) {
-        if (!window.gs.bPlay) return;
-    var pos0 = elCanvas.offset();
-        var x = e.pageX, y = e.pageY,
-            xc = x - pos0.left, yc = y - pos0.top;
-        picxonix('cursorDir', [xc, yc]);
-    });
-
-
-    $playBtn.show().click(function(e) {
-        e.preventDefault();
-        newGameHomeScreen('button')
-        startLevel();
-    });
-
-
-    function quitPressed() {
-        if (window.gs.bPlay || window.gs.bStarted) {
-            picxonix('end', false);
-            picxonix('quit'); // Ensure full reset of game state
-        }
-        window.gs.bPlay = false;
-        window.gs.bStarted = false;
-
-        //iLevel = 0; // Reset to initial state (same as page load)
-       // nTimeTotal = 0;
-       // show play button again
-        $gameStatusText.hide();
-        console.log($('#play-btn').text());
+        $gameStatusTxt.hide();
         $playBtn.prop('disabled', false).show()
-           .html('<span class="glyphicon glyphicon-repeat"></span> Try Again')
-            .off('click').on('click', function(e) {
+            .html('<span class="glyphicon glyphicon-repeat"></span> Try Again')
+            .off('click').on('click', (e) => {
                 e.preventDefault();
-                newGameHomeScreen();
-                startLevel();
+                _startNewGame();
+                _startLevel();
             });
-        preloadLevel(); // This will load the first level (index 0)
     }
 
-    function preloadLevel() {
-        if (window.gs.iLevel >= window.gs.nLevels) {
-            // All levels completed - this shouldn't happen here anymore
-            window.gs.iLevel = 0;
+    function _onFault() {
+        setTimeout(() => {
+            $gameStatusTxt.hide();
+            $playBtn.prop('disabled', false).show()
+                .html('<span class="glyphicon glyphicon-play"></span> Play')
+                .off('click').on('click', (e) => {
+                    e.preventDefault();
+                    _startNewGame();
+                    _startLevel();
+                });
+        }, FAULT_DISPLAY_DELAY);
+    }
+
+    function _onLevelComplete() {
+        game.state.isPlaying  = false;
+        game.state.isStarted  = false;
+
+        setTimeout(() => {
+            const hasMoreLevels = game.state.levelIndex < game.state.totalLevels;
+
+            $gameStatusTxt.hide();
+
+            if (hasMoreLevels) {
+                $playBtn.prop('disabled', false).show()
+                    .html('<span class="glyphicon glyphicon-play"></span> Next Level')
+                    .off('click').on('click', (e) => {
+                        e.preventDefault();
+                        game.state.levelIndex++;
+                        _startLevel();
+                    });
+                banner.showReadyToLevel();
+            } else {
+                $playBtn.prop('disabled', false).show()
+                    .html('<span class="glyphicon glyphicon-repeat"></span> Play Again')
+                    .off('click').on('click', (e) => {
+                        e.preventDefault();
+                        _startNewGame();
+                        _startLevel();
+                    });
+                banner.showReadyToStart();
+            }
+        }, LEVEL_COMPLETE_DISPLAY_DELAY);
+    }
+
+    // ── Layout / fullscreen ────────────────────────────────────────────────────
+
+    // Predefined font scale map: fraction of slot dimension and bar dimension
+    const SIDEBAR_FONT_SCALES = {
+        title:  { ofSlot: 0.50, ofBar: 0.30 },
+        value:  { ofSlot: 0.46, ofBar: 0.38 },
+        label:  { ofSlot: 0.28, ofBar: 0.22 },
+        banner: { ofSlot: 0.28, ofBar: 0.22 },
+    };
+
+    /**
+     * Compute sidebar font sizes.
+     * barDim  – the sidebar's narrow dimension (width for vertical, height for horizontal)
+     * slotDim – one slot's narrow dimension (height for vertical, width for horizontal)
+     * Value font is reduced 30% from the auto-computed size unless explicitly set.
+     */
+    function _sidebarFonts(s, barDim, slotDim) {
+        const fTitle  = typeof s.title_fontsize === 'number'
+            ? s.title_fontsize
+            : Math.max(10, Math.round(Math.min(barDim * SIDEBAR_FONT_SCALES.title.ofBar,  slotDim * SIDEBAR_FONT_SCALES.title.ofSlot)));
+        const fValue  = typeof s.sidebar_value_fontsize === 'number'
+            ? s.sidebar_value_fontsize
+            : Math.max(10, Math.round(Math.min(barDim * SIDEBAR_FONT_SCALES.value.ofBar,  slotDim * SIDEBAR_FONT_SCALES.value.ofSlot) * 0.7));
+        const fLabel  = typeof s.sidebar_item_fontsize === 'number'
+            ? s.sidebar_item_fontsize
+            : Math.max(7,  Math.round(Math.min(barDim * SIDEBAR_FONT_SCALES.label.ofBar,  slotDim * SIDEBAR_FONT_SCALES.label.ofSlot)));
+        const fBanner = typeof s.banner_fontsize === 'number'
+            ? s.banner_fontsize
+            : Math.max(7,  Math.round(Math.min(barDim * SIDEBAR_FONT_SCALES.banner.ofBar, slotDim * SIDEBAR_FONT_SCALES.banner.ofSlot)));
+        return { fTitle, fValue, fLabel, fBanner };
+    }
+
+    function _applySidebarFonts({ fTitle, fValue, fLabel, fBanner }) {
+        const sidebar = document.getElementById('fs-sidebar');
+        sidebar.style.setProperty('--fs-font-title',  fTitle  + 'px');
+        sidebar.style.setProperty('--fs-font-value',  fValue  + 'px');
+        sidebar.style.setProperty('--fs-font-label',  fLabel  + 'px');
+        sidebar.style.setProperty('--fs-font-banner', fBanner + 'px');
+    }
+
+    function updateLayout() {
+        const s  = game.settingsData ?? {};
+        const cs = s.cellSize ?? 10;
+
+        // Save original grid dimensions once (before grid_autofit may overwrite them)
+        if (s.gridCols != null && s._gridColsOrig == null) s._gridColsOrig = s.gridCols;
+        if (s.gridRows != null && s._gridRowsOrig == null) s._gridRowsOrig = s.gridRows;
+        const origCols = s._gridColsOrig ?? s.gridCols ?? 60;
+        const origRows = s._gridRowsOrig ?? s.gridRows ?? 40;
+
+        const isFs = window.innerHeight >= screen.height - 5;
+
+        // Toggle non-playfield elements.
+        $('h3.text-center').toggle(!isFs);
+        $('.controls-row').toggle(!isFs);
+        $('.hint-row').toggle(!isFs);
+
+        if (!isFs) {
+            $('body').removeClass('fs-mode');
+            $('#fs-sidebar').hide().removeClass('fs-sidebar-top fs-sidebar-right fs-sidebar-bottom');
+            $('#statusbar').show();
+            // Restore original grid dimensions if grid_autofit had modified them.
+            if (s._gridColsOrig != null) { s.gridCols = s._gridColsOrig; s.gridRows = s._gridRowsOrig; }
+            const totalW = (origCols + 4) * cs;
+            const totalH = (origRows + 4) * cs;
+            const uiH    = 180;
+            const availW = window.innerWidth  - 24;
+            const availH = window.innerHeight - uiH - ($('#statusbar').outerHeight(true) || 42);
+            const scale  = Math.min(1, availW / totalW, availH / totalH);
+            const pageW  = Math.max(Math.round(totalW * scale) + 24, 400);
+            $('.page-wrap').css({ width: pageW + 'px', 'max-width': '', margin: '0 auto 10px', padding: '', 'flex-direction': '' });
+            $('#game-area').css({ zoom: scale, width: totalW + 'px', margin: '0 auto', 'flex-shrink': '' });
+            banner.syncSizes();
             return;
         }
 
-        // var img = window.ls.get_image(function() {$playBtn.prop('disabled', false);},
-        //         function() {
-        //             console.error('Failed to load image:', 'pics/' + window.gs.iLevel);
-        //             $playBtn.prop('disabled', false); // Enable button even if image fails
-        //     })
+        $('body').addClass('fs-mode');
+        $('.page-wrap').css({ width: '100%', 'max-width': 'none', margin: '0', padding: '0' });
+        $('#statusbar').hide();
 
-        // )
-        // if (img.complete) {
-        //     $playBtn.prop('disabled', false);
-        // } else {
-        //     $playBtn.prop('disabled', true);
-        // }
-
-        // Don't overwrite window.gs.oLevel.image - keep the original filename
-    }
-
-    function startLevel() {
-        if(window.ls.iLevel<1)return;
-        picxonix('reset'); // Always reset before starting a new level
-        console.log('Starting level startLevel fnc', window.gs.iLevel, 'with image');
-        // Update button container to show game running
-        $playBtn.prop('disabled', true).hide().html('In Progress')
-        $gameStatusText.show();
-
-        if (!window.gs.bStarted)
-            $('.my-panel').removeClass('hidden');
-
-
-        window.gs.bStarted = true;
-        window.gs.bPlay = true;
-        window.gs.bConquer = false;
-        window.gs.bCollision = false;
-        $statusProgressCurrent.html(window.gs.iLevel);
-
-        window.loadLevel()
-        $('#banner').html('Go on . . ')
-        window.gs.tLevel = Date.now();
-        window.gs.nTimeLevel = 0;
-        }
-    window.fn_update = function(dt) {
-        // Accumulate fractional movement
-        if (window.cursor.dir === false){
-            window.var_cursorMoveRemainder = 0
-        }else{
-            window.var_cursorMoveRemainder += dt * (window.gs.speedCursor + window.gs.speedBonus);
-        }
-
-        window.var_enemyMoveRemainder += dt * ( Math.min(window.ls.speedEnemy - window.ls.speedEnemyReduce));
-        var distCursor = Math.floor(window.var_cursorMoveRemainder);
-        var distEnemy = Math.floor(window.var_enemyMoveRemainder);
-        window.var_cursorMoveRemainder -= distCursor;
-        window.var_enemyMoveRemainder -= distEnemy;
-
-        // console.log('dt:', dt.toFixed(3),'eSpeed', window.ls.speedEnemy, 'distCursor:', distCursor, 'distEnemy:', distEnemy);
-        if (!(distCursor >= 1 || distEnemy >= 1)) return false;
-            window.cursor.update(distCursor);
-            // Bonus item collision check
-            if (window.stageData.bonus.active && distCursor >= 1){
-                //console.log('Checking bonus collision at pos:', window.cursor.pos(),distCursor, distEnemy)
-                var posCr = window.cursor.pos();
-                if (window.stageData.bonus.check_capture(posCr)){
-                    window.stageData.bonus.applyBonus(window.gd.cfgMain,window.gs.ctxMain);
-                    window.update_status_bar();
-                }
-
-            }
-
-            var i;
-            for (i = 0; i < window.ls.nBalls; i++) window.ls.aBalls[i].update(distEnemy);
-            for (i = 0; i < window.ls.nWarders; i++) window.ls.aWarders[i].update(distEnemy);
-            if(!window.stageData.bonus.active)
-                {
-                    if(window.stageData.cum_area<50) window.stageData.bonus = BonusItem.random(5, 5, window.cellset.nW-5, window.cellset.nH-5, 'tank')
-                }
-            return true;
-        }
-
-    window.fn_updateTime = function() {
-        var n = Math.floor((Date.now() - window.gs.tLevel) / 1000);
-        if (n - window.gs.nTimeLevel < 1) return;
-        window.gs.nTimeLevel = n;
-        function str_pad(s) {
-            return Array(3 - s.length).join('0') + s;
-        }
-        n = window.gs.nTimeLevel + window.gs.nTimeTotal;
-        var nm = String(Math.floor(n / 60)), ns = String(n % 60);
-        $('#status-time').html(str_pad(nm)+':'+str_pad(ns));
-    }
-
-    window.afterFault = function() {
-        window.gs.nFaults -= 1
-        $('#banner').html('Oops..');
-        window.update_status_bar('update');
-        if (window.gs.nFaults > 0) return;
-
-        // Stop the game properly
-        window.gs.bPlay = false;
-        window.gs.bStarted = false;
-        picxonix('end', false);
-        picxonix('reset'); // Ensure full reset before retry
-
-        setTimeout(function() {
-            preloadLevel();
-
-            // Update button container to show Try Again button
-            $('#game-status-text').hide();
-            $('#play-btn').prop('disabled', false).show()
-                .html('<span class="glyphicon glyphicon-play"></span> Play')
-                .off('click').on('click', function(e) {
-                    e.preventDefault();
-                    newGameHomeScreen()
-                    startLevel();
-                });
-
-    },1000)
-}
-
-    function newGameHomeScreen(origin){
-        console.log('=== NEW GAME request==='+origin);
-        picxonix('newgame',0)
-        //$('#banner').html('START TO PLAY');
-        // picxonix('quit')
-        //$('#game-status-text').hide();
-        //$('#play-btn').html('<span class="glyphicon glyphicon-play"></span> Play')
-        //    .off('click').on('click', function(e) {
-        //        e.preventDefault();
-        //        startLevel();
-         //   });
-        // preloadLevel();
-
-    }
-
-
-    window.fn_postConquer = function(cleared_area, cleared_thr) {
-        $('#status-points').html(cleared_area.toFixed(0)+'%');
-        var new_area = cleared_area- window.stageData.cum_area
-        window.gs.score+=new_area
-        window.stageData.cum_area = cleared_area
-        window.update_status_bar('conquer');
-        if (cleared_area < cleared_thr) return false;
-
-        // Level Complete procedure
-         if (window.gs.iLevel < window.gs.nLevels){
-            $('#banner').html('Level Complete');
-
-        }else{
-            $('#banner').html('CONGRATULATIONS !!!');
-        }
-        window.flashEffect({duration: 50, opacity: 0.9})
-        window.gs.endLevel(true); // This leads to window.postLevelComplete()
-
-        return true;
-    }
-
-    window.postLevelComplete = function() {
-        window.gs.bPlay = false;
-        window.gs.bStarted = false;
-        setTimeout(function() {
-            if (window.gs.iLevel < window.gs.nLevels) {
-                // Load next level
-                preloadLevel();
-                // Update button container to show Next Level button
-                $('#game-status-text').hide();
-                // # check if q is pressed during waiting time
-                if($('#play-btn').text() != 'In Progress'){
-                    console.log('Q pressed before next level animation. Aborting Next level button');
-                    return;
-                }
-
-                $('#play-btn').prop('disabled', false).show()
-                    .html('<span class="glyphicon glyphicon-play"></span> Next Level')
-                    .off('click').on('click', function(e) {
-                        e.preventDefault();
-                        window.gs.iLevel += 1;
-                        window.gs.startLevelStateCells(window.gs.iLevel);
-
-                        startLevel();
-                    });
+        // Determine sidebar position.
+        // Explicit setting: 'left'|'right'|'top'|'bottom'|'off'
+        // null / missing: auto-detect from aspect ratio (legacy fullscreen_statusbar respected)
+        let sidebarPos = s.sidebar ?? null;
+        if (sidebarPos == null) {
+            const showSidebar = s.fullscreen_statusbar ?? true;
+            if (!showSidebar) {
+                sidebarPos = 'off';
             } else {
-
-
-                // Update button container to show Play Again button
-                $('#game-status-text').hide();
-                $('#play-btn').prop('disabled', false).show()
-                    .html('<span class="glyphicon glyphicon-repeat"></span> Play Again')
-                    .off('click').on('click', function(e) {
-                        e.preventDefault();
-                        newGameHomeScreen('button')
-                        startLevel();
-                    });
+                const gameAspect   = ((origCols + 4) * cs) / ((origRows + 4) * cs);
+                const screenAspect = window.innerWidth / window.innerHeight;
+                sidebarPos = screenAspect > gameAspect ? 'left' : 'top';
             }
-        }, 1500);
+        }
+
+        const gridAutofit = s.grid_autofit ?? false;
+
+        // ── No sidebar ──────────────────────────────────────────────────────────
+        if (sidebarPos === 'off') {
+            $('#fs-sidebar').hide().removeClass('fs-sidebar-top fs-sidebar-right fs-sidebar-bottom');
+            let cols, rows, scale;
+            if (gridAutofit) {
+                cols = Math.max(1, Math.floor(window.innerWidth  / cs) - 4);
+                rows = Math.max(1, Math.floor(window.innerHeight / cs) - 4);
+                s.gridCols = cols; s.gridRows = rows;
+                scale = 1;
+            } else {
+                cols = origCols; rows = origRows;
+                const tw = (cols + 4) * cs, th = (rows + 4) * cs;
+                scale = Math.min(window.innerWidth / tw, window.innerHeight / th);
+            }
+            const scaledW = Math.round((cols + 4) * cs * scale);
+            const scaledH = Math.round((rows + 4) * cs * scale);
+            const padX = Math.floor((window.innerWidth  - scaledW) / 2);
+            const padY = Math.floor((window.innerHeight - scaledH) / 2);
+            $('.page-wrap').css({ 'flex-direction': 'row', 'padding-left': padX + 'px', 'padding-top': padY + 'px' });
+            $('#game-area').css({ zoom: scale, width: (cols + 4) * cs + 'px', margin: '0', 'flex-shrink': '0' });
+            banner.syncSizes();
+            return;
+        }
+
+        const isVertical = sidebarPos === 'left' || sidebarPos === 'right';
+
+        // ── Vertical sidebar (left / right) ────────────────────────────────────
+        if (isVertical) {
+            let sidebarW, cols, rows, scale;
+
+            if (gridAutofit) {
+                if (typeof s.sidebar_width !== 'number') {
+                    console.warn('[grid_autofit] sidebar_width must be a number; defaulting to 80');
+                    sidebarW = 80;
+                } else {
+                    sidebarW = s.sidebar_width;
+                }
+                const availW = window.innerWidth - sidebarW;
+                cols = Math.max(1, Math.floor(availW / cs) - 4);
+                rows = Math.max(1, Math.floor(window.innerHeight / cs) - 4);
+                sidebarW += availW - (cols + 4) * cs;   // absorb width remainder
+                s.gridCols = cols; s.gridRows = rows;
+                scale = 1;
+            } else {
+                const totalW = (origCols + 4) * cs, totalH = (origRows + 4) * cs;
+                cols = origCols; rows = origRows;
+                if (typeof s.sidebar_width === 'number') {
+                    sidebarW = s.sidebar_width;
+                    const availW = window.innerWidth - sidebarW;
+                    scale = Math.min(window.innerHeight / totalH, availW / totalW);
+                } else {
+                    const minSW = 80;
+                    scale = window.innerHeight / totalH;
+                    if (totalW * scale > window.innerWidth - minSW)
+                        scale = (window.innerWidth - minSW) / totalW;
+                    sidebarW = Math.max(minSW, Math.floor(window.innerWidth - totalW * scale));
+                }
+            }
+
+            const canvasH = Math.round((rows + 4) * cs * scale);
+            const slotH   = canvasH / 9;
+            const fonts   = _sidebarFonts(s, sidebarW, slotH);
+            _applySidebarFonts(fonts);
+            console.log('[FS ' + sidebarPos + ' sidebar] page:', window.innerWidth + 'x' + window.innerHeight,
+                '| playfield:', Math.round((cols + 4) * cs * scale) + 'x' + canvasH,
+                '| sidebar:', sidebarW + 'x' + canvasH);
+
+            $('.page-wrap').css({ 'flex-direction': 'row', 'padding-left': '0', 'padding-top': '0' });
+            $('#fs-sidebar')
+                .removeClass('fs-sidebar-top fs-sidebar-right fs-sidebar-bottom')
+                .toggleClass('fs-sidebar-right', sidebarPos === 'right')
+                .css({ display: 'flex', width: sidebarW + 'px', height: canvasH + 'px' });
+            $('#game-area').css({ zoom: scale, width: (cols + 4) * cs + 'px', margin: '0', 'flex-shrink': '0' });
+            banner.syncSizes();
+
+        // ── Horizontal sidebar (top / bottom) ──────────────────────────────────
+        } else {
+            let sidebarH, cols, rows, scale;
+
+            if (gridAutofit) {
+                if (typeof s.sidebar_height !== 'number') {
+                    console.warn('[grid_autofit] sidebar_height must be a number; defaulting to 50');
+                    sidebarH = 50;
+                } else {
+                    sidebarH = s.sidebar_height;
+                }
+                const availH = window.innerHeight - sidebarH;
+                cols = Math.max(1, Math.floor(window.innerWidth  / cs) - 4);
+                rows = Math.max(1, Math.floor(availH / cs) - 4);
+                sidebarH += availH - (rows + 4) * cs;   // absorb height remainder
+                s.gridCols = cols; s.gridRows = rows;
+                scale = 1;
+            } else {
+                const totalW = (origCols + 4) * cs, totalH = (origRows + 4) * cs;
+                cols = origCols; rows = origRows;
+                if (typeof s.sidebar_height === 'number') {
+                    sidebarH = s.sidebar_height;
+                    const availH = window.innerHeight - sidebarH;
+                    scale = Math.min(window.innerWidth / totalW, availH / totalH);
+                } else {
+                    const minSH = 50;
+                    scale = window.innerWidth / totalW;
+                    if (totalH * scale > window.innerHeight - minSH)
+                        scale = (window.innerHeight - minSH) / totalH;
+                    sidebarH = Math.max(minSH, Math.floor(window.innerHeight - totalH * scale));
+                }
+            }
+
+            const canvasW = Math.round((cols + 4) * cs * scale);
+            const slotW   = canvasW / 9;
+            const fonts   = _sidebarFonts(s, sidebarH, slotW);
+            _applySidebarFonts(fonts);
+            console.log('[FS ' + sidebarPos + ' sidebar] page:', window.innerWidth + 'x' + window.innerHeight,
+                '| playfield:', canvasW + 'x' + Math.round((rows + 4) * cs * scale),
+                '| sidebar:', canvasW + 'x' + sidebarH);
+
+            $('.page-wrap').css({ 'flex-direction': 'column', 'padding-left': '0', 'padding-top': '0' });
+            $('#fs-sidebar')
+                .removeClass('fs-sidebar-top fs-sidebar-right fs-sidebar-bottom')
+                .addClass('fs-sidebar-top')
+                .toggleClass('fs-sidebar-bottom', sidebarPos === 'bottom')
+                .css({ display: 'flex', width: canvasW + 'px', height: sidebarH + 'px' });
+            $('#game-area').css({ zoom: scale, width: (cols + 4) * cs + 'px', margin: '0', 'flex-shrink': '0' });
+            banner.syncSizes();
+        }
     }
-    function enableOptions(bOn) {
-        $('#answeropts > button').prop('disabled', !bOn);
-    }
+
+    // Call once after layout helpers/constants are initialized.
+    updateLayout();
 
 });
-
-
-
-//TODO
-// When game paused duting freez, the freez counter keeps ticking and ends in 3 sec even if paused.

@@ -1,120 +1,204 @@
+﻿import { CELL_CLEARED, CELL_TRAIL, dirs, ADJACENT_COLLISION } from './constants.js';
+import { game } from './gamestate.js';
 
-// The Enemy class in modern style
+/**
+ * An enemy entity.  There are two enemy types:
+ *   - Ball    (isWarder = false): bounces inside the playfield interior.
+ *   - Warder  (isWarder = true):  roams the border and cleared cells.
+ */
 export class Enemy {
-    constructor(x, y, type, dir) {
-        this.x = x; // current x position
-        this.y = y; // current y position
-        this.x0 = x; // previous x position
-        this.y0 = y; // previous y position
-        var aDirs = [45, 135, 225, 315];
-        this.dir = dir === undefined ? aDirs[Math.floor(Math.random() * 4)] : dir; // current movement direction (angle in degrees)
-        this.type = Boolean(type); // (boolean) type of enemy (false - Ball, true - Warder)
+    constructor(x, y, isWarder, direction) {
+        this.x       = x;
+        this.y       = y;
+        this.prevX   = x;
+        this.prevY   = y;
+        this.isWarder  = Boolean(isWarder);
+        // True when a ball has migrated onto cleared territory and must roam
+        // like a warder — but still renders as a ball.
+        this.isBallExiled = false;
+
+        // Default to a random diagonal direction when none is provided.
+        const diagonals = [45, 135, 225, 315];
+        this.direction  = direction !== undefined
+            ? direction
+            : diagonals[Math.floor(Math.random() * 4)];
     }
 
-    // reset enemy position:
+    /** Teleport to (x, y) — used after a collision recovery. */
     reset(x, y) {
         this.x = x;
         this.y = y;
     }
 
-    // update position - move by given distance:
+    /** Return the current [x, y] position. */
+    pos() { return [this.x, this.y]; }
+
+    /** Advance the enemy by `dist` cells, applying bounces. */
     update(dist) {
-        var ret = this._calcPath(this.x, this.y, dist, this.dir);
-        this.x = ret.x;
-        this.y = ret.y;
-        this.dir = ret.dir;
+        // If a ball has ended up on cleared territory (e.g. after sneaky conquest),
+        // permanently promote it to a warder so it roams the border like one.
+        if (!this.isWarder && !this.isBallExiled && (game.grid.cellValue(this.x, this.y) & CELL_CLEARED)) {
+            this.isBallExiled = true;
+        }
+        const result   = this._movePath(this.x, this.y, dist, this.direction);
+        this.x         = result.x;
+        this.y         = result.y;
+        this.direction = result.direction;
     }
 
-    // render current position:
+    /** Redraw the enemy at its current position and erase the previous one. */
     render() {
-        if (this.x0 == this.x && this.y0 == this.y) {
-            //console.log('render skipped')
-            if (window.gs.tLastFrame) return;
+        const state  = game.state;
+        const cfg    = game.config;
+        const grid   = game.grid;
+
+        if (this.prevX === this.x && this.prevY === this.y) {
+            if (state.lastFrameTime) return;
         } else {
-            if (this.type && window.cellset.isPosIn(this.x0, this.y0))
-                window.gs.clearCellArea(this.x0, this.y0);
-            else
-                window.gs.fillCellArea(this.type ? window.gd.cfgMain.colorBorder : window.gd.cfgMain.colorFill, this.x0, this.y0);
-            this.x0 = this.x;
-            this.y0 = this.y;
+            // Erase previous position.
+            if ((this.isWarder || this.isBallExiled) && grid.isInsideGrid(this.prevX, this.prevY)) {
+                state.clearCells(this.prevX, this.prevY);
+            } else if (!this.isWarder && !this.isBallExiled && (grid.cellValue(this.prevX, this.prevY) & CELL_CLEARED)) {
+                // Ball was on a cleared cell — reveal background.
+                state.clearCells(this.prevX, this.prevY);
+                // If a bonus overlaps the previous position, redraw it.
+                if (game.bonus?.containsPoint([this.prevX, this.prevY])) game.bonus.render();
+            } else if (!this.isWarder && !this.isBallExiled && (grid.cellValue(this.prevX, this.prevY) & CELL_TRAIL)) {
+                // Ball was on a trail cell — restore trail appearance.
+                const trailOpacity = game.level.isInvincible ? 0.5 : 1;
+                if (trailOpacity < 1) state.fillCells(cfg.colorEmpty, this.prevX, this.prevY);
+                state.fillCells(cfg.colorTrail, this.prevX, this.prevY, 1, 1, trailOpacity);
+            } else {
+                state.fillCells(
+                    (this.isWarder || this.isBallExiled) ? cfg.colorBorder : cfg.colorEmpty,
+                    this.prevX, this.prevY
+                );
+                // If a bonus overlaps the previous position, redraw it.
+                if (game.bonus?.containsPoint([this.prevX, this.prevY])) game.bonus.render();
+            }
+            this.prevX = this.x;
+            this.prevY = this.y;
         }
-        //console.log('enemy:', this.x,this.y)
-        window.gs.drawCellImg(this.type ? window.var_imgWarder : window.var_imgBall, this.x, this.y);
+
+        state.drawCellImage(
+            this.isWarder ? game.images.warder : game.images.ball,
+            this.x, this.y
+        );
     }
 
-    clear_render() {
-        if (window.cellset.isPosIn(this.x, this.y))
-            window.gs.clearCellArea(this.x, this.y);
+    /**
+     * Erase this enemy from its current position (used when it is removed
+     * mid-game, e.g. by the killwarder bonus).
+     */
+    eraseFromCanvas() {
+        const grid = game.grid;
+        if (grid.isInsideGrid(this.x, this.y))
+            game.state.clearCells(this.x, this.y);
         else
-            window.gs.fillCellArea(this.type ? window.gd.cfgMain.colorBorder : window.gd.cfgMain.colorFill, this.x, this.y);
+            game.state.fillCells(
+                (this.isWarder || this.isBallExiled) ? game.config.colorBorder : game.config.colorEmpty,
+                this.x, this.y
+            );
     }
 
-    // current position:
-    pos() {
-        return [this.x, this.y];
-    }
+    // ── Internal movement ────────────────────────────────────────────────────
 
-    // calculate movement path:
-    _calcPath(x, y, dist, dir) {
-        var vec = window.var_dirset.get(dir), vecX = vec[0], vecY = vec[1];
-        var posCr = window.cursor.pos();
-        var xC = posCr[0], yC = posCr[1],
-            vC = window.cellset.value(xC, yC), bC = !this.type ^ vC & window.CA_CLEAR;
-        if (
-            (!window.ls.ignoreCollisionBonus) &&
-            (bC &&
-            (window.gd.cfgMain.collisionAdjacent
-                ? Math.abs(x - xC) <= 1 && Math.abs(y - yC) <= 1
-                : x === xC && y === yC) ||
-            (!this.type && this._isCollision(x, y, dir)))
-        ) {
-            window.gs.bCollision = true;
-        }
+    /**
+     * Recursively move `dist` cells from (x, y) in `direction`, bouncing as needed.
+     * Sets game.state.hasCollision when the cursor is hit.
+     */
+    _movePath(x, y, dist, direction) {
+        const cursor = game.cursor;
+        const state  = game.state;
+        const level  = game.level;
+        const grid   = game.grid;
 
-        for (var n = 0; n < dist && !window.gs.bCollision; n++) {
-            var xt = x + vecX, yt = y + vecY;
-            var dirB = this._calcBounce(x, y, dir, xt, yt);
-            if (dirB !== false) return this._calcPath(x, y, dist - n, dirB);
-            if (
-                (!window.ls.ignoreCollisionBonus) &&
-                (bC && (
-                    window.gd.cfgMain.collisionAdjacent
-                        ? Math.abs(xt - xC) <= 1 && Math.abs(yt - yC) <= 1
-                        : xt === xC && yt === yC
-                ) ||
-                (!this.type && this._isCollision(xt, yt, dir)))
-            ) {
-                window.gs.bCollision  = true;
+        const [cx, cy] = cursor.pos();
+        const cursorCellVal = grid.cellValue(cx, cy);
+        // A ball collides when it enters an occupied/cleared cell; a warder collides
+        // when it enters an unexplored cell.  XOR implements this toggle.
+        const cursorIsTarget = !(this.isWarder || this.isBallExiled) ^ !!(cursorCellVal & CELL_CLEARED);
+
+        const checkCursorAt = (ex, ey, dir) => {
+            if (level.isInvincible) return;
+            if (cursorIsTarget) {
+                const hit = ADJACENT_COLLISION
+                    ? Math.abs(ex - cx) <= 1 && Math.abs(ey - cy) <= 1
+                    : ex === cx && ey === cy;
+                if (hit) state.hasCollision = true;
+            } else if (!this.isWarder && ex === cx && ey === cy) {
+                // Ball landed on cleared territory (e.g. after sneaky conquest) —
+                // still collide if cursor occupies the exact same cell.
+                state.hasCollision = true;
+            }
+            if (!this.isWarder && !this.isBallExiled) this._checkTrailCollision(ex, ey, dir);
+        };
+
+        checkCursorAt(x, y, direction);
+
+        const MAX_BOUNCES = 8;
+        let bounces = 0;
+        let n = 0;
+        while (n < dist && !state.hasCollision) {
+            const [vx, vy] = dirs.get(direction);
+            const xt = x + vx, yt = y + vy;
+            const bounceDir = this._getBounceDirection(x, y, direction, xt, yt);
+            if (bounceDir !== false) {
+                if (++bounces > MAX_BOUNCES) break;
+                direction = bounceDir;
+                continue;
             }
 
-            if (!this.type && !window.cellset.isPosIn(xt, yt)) break;
+            checkCursorAt(xt, yt, direction);
+
+            if (!this.isWarder && !this.isBallExiled && !grid.isInsideGrid(xt, yt)) break;
             x = xt;
             y = yt;
+            n++;
         }
-        return { x: x, y: y, dir: dir };
+
+        return { x, y, direction };
     }
 
-    // calculate bounce direction if any:
-    _calcBounce(x, y, dir, xt, yt) {
-        var ret = window.cellset.applyRelDirs(x, y, dir, [-45, 45]);
-        var b1 = this.type ^ ret[0][3] & window.CA_CLEAR,
-            b2 = this.type ^ ret[1][3] & window.CA_CLEAR;
-        return b1 ^ b2 ? (b1 ? dir + 90 : dir + 270) % 360 : this.type ^ window.cellset.value(xt, yt) & window.CA_CLEAR || b1 && b2 ? (dir + 180) % 360 : false;
+    /**
+     * Determine the bounce direction when moving from (x, y) toward (xt, yt).
+     * Returns a new angle, or false if no bounce is needed.
+     */
+    _getBounceDirection(x, y, direction, xt, yt) {
+        const warding = this.isWarder || this.isBallExiled;
+
+        const [left, right] = game.grid.getAdjacentCells(x, y, direction, [-45, 45]);
+        const b1 = warding ^ !!(left[3]  & CELL_CLEARED);
+        const b2 = warding ^ !!(right[3] & CELL_CLEARED);
+
+        if (b1 ^ b2) return (b1 ? direction + 90 : direction + 270) % 360;
+
+        const frontClear = warding ^ !!(game.grid.cellValue(xt, yt) & CELL_CLEARED);
+        return frontClear || (b1 && b2) ? (direction + 180) % 360 : false;
     }
 
-    // checks if enemy position is in collision with the cursor trail:
-    _isCollision(x, y, dir) {
-        if (window.cellset.value(x, y) & window.CA_TRAIL) return true;
-
-        if (!window.gd.cfgMain.collisionAdjacent) return false;
-
-        // Adjacent-cell check only if enabled
-        var aDirs = [-45, 45, -90, 90];
-        for (var i = 0; i < 4; i++) {
-            var d = (dir + aDirs[i] + 360) % 360,
-                vec = window.var_dirset.get(d);
-            if (window.cellset.value(x + vec[0], y + vec[1]) & window.CA_TRAIL) return true;
+    /**
+     * Collision check against the cursor trail (balls only).
+     * Sets game.state.hasCollision if (x, y) is on or adjacent to the trail.
+     */
+    _checkTrailCollision(x, y, direction) {
+        if (game.level.isInvincible) return;
+        // If a conquest just completed this frame (e.g. sneaky mode ended on trail
+        // completion), the trail is about to be cleared — skip collision.
+        if (game.state.hasConquered) return;
+        if (game.grid.cellValue(x, y) & CELL_TRAIL) {
+            game.state.hasCollision = true;
+            return;
         }
-        return false;
+        if (!ADJACENT_COLLISION) return;
+
+        for (const offset of [-45, 45, -90, 90]) {
+            const angle    = (direction + offset + 360) % 360;
+            const [vx, vy] = dirs.get(angle);
+            if (game.grid.cellValue(x + vx, y + vy) & CELL_TRAIL) {
+                game.state.hasCollision = true;
+                return;
+            }
+        }
     }
 }

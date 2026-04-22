@@ -1,356 +1,633 @@
-/**
- * PicXonix
- * https://github.com/hindmost/picxonix
- * @author   Savr Goryaev
- * @license  MIT http://www.opensource.org/licenses/MIT
+﻿/**
+ * picxonix.js – Game engine
+ *
+ * Owns the main game loop, canvas setup, level loading, and all game-event
+ * handling (collision, conquest, fault, level-complete).
+ *
+ * Public API (imported by main.js):
+ *   initWrapperEl(el)            – create the DOM wrapper div inside `el`
+ *   newGame()                    – initialise a fresh game (GameConfig + GameState)
+ *   quitGame()                   – stop gameplay and reset status bar
+ *   loadCurrentLevel()           – load the current level image and start the loop
+ *   endLevel(success)            – stop the current level; animate clear when success=true
+ *   setCursorDirection(keyName)  – keyboard input ('left'|'right'|'up'|'down'|'stop')
+ *   setCursorDirectionToward(pos)– mouse/touch input: [canvasX, canvasY]
+ *   setCursorSpeed(n)            – set base cursor speed
+ *   setEnemySpeed(n)             – set base enemy speed
+ *   spawnWarder()                – add an extra warder to the field
+ *   flashEffect(options)         – brief visual flash on the canvas overlay
  */
-// picxonix.js
-import { BonusItem } from './bonus.js';
-import { GameDef, LevelState, GameState } from './gamestate.js';
-import { Cursor } from './cursor.js';
-import { CellSet } from './cellset.js';
-import { Enemy } from './enemy.js';
 
-export function test_function(){
-    console.log('Test func called');
+import { Bonus, rebuildCursorSprite }   from './bonus.js';
+import { GameConfig, GameState, LevelConfig, game } from './gamestate.js';
+import { Cursor }                        from './cursor.js';
+import { Grid }                          from './cellset.js';
+import { Enemy }                         from './enemy.js';
+import { dirs, COLLISION_TIMEOUT, LEVEL_CLEAR_DELAY, LEVEL_CLEAR_DURATION, BONUS_MARGIN, BONUS_SPAWN_CLEARED_THRESHOLD } from './constants.js';
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/** Fetch settings.json and store game settings + level definitions in game. */
+export async function loadLevels() {
+    const response = await fetch('settings.json');
+    const data = await response.json();
+    game.settingsData = data.game ?? {};
+    game.levelsData   = data.levels ?? [];
 }
 
-// Call the test_function to avoid compile error
-test_function();
-
-(function() {
-    var tLast = 0;
-    var vendors = ['webkit', 'moz'];
-    for(var i = 0; i < vendors.length && !window.requestAnimationFrame; ++i) {
-        var v = vendors[i];
-        window.requestAnimationFrame = window[v+'RequestAnimationFrame'];
-        window.cancelAnimationFrame = window[v+'CancelAnimationFrame'] ||
-            window[v+'CancelRequestAnimationFrame'];
-    }
-    if (!window.requestAnimationFrame)
-        window.requestAnimationFrame = function(callback, element) {
-            var tNow = Date.now();
-            var dt = Math.max(0, 17 - tNow + tLast);
-            var id = setTimeout(function() { callback(tNow + dt); }, dt);
-            tLast = tNow + dt;
-            return id;
-        };
-    if (!window.cancelAnimationFrame)
-        window.cancelAnimationFrame = function(id) {
-            clearTimeout(id);
-        };
-}());
-
-(function() {
-
-    window.picxonix = function(v1, v2) {
-        console.log('picxonix called:', v1, v2);
-        switch (v1) {
-            case 'init':
-                init(v2)
-                break;
-            case 'quit': // quit game
-                window.gs.resetCanvas('quit');
-                break;
-            case 'reset': // reset game
-                window.gs.resetCanvas('reset');
-                break;
-            case 'end': // finish the current level
-                window.gs.endLevel(v2);
-                if(v2){
-
-                }
-                else{
-                    $('#banner').html('Game Over :( ')
-                }
-                break;
-            case 'newgame':
-                newGameInit(v2);
-                break;
-            case 'cursorDir': // set the cursor movement direction
-                typeof v2 == 'string'? window.gs.setDir(v2) : window.gs.setDirToward(v2);
-                break;
-            case 'cursorSpeed': // set the cursor speed
-                setCursorSpeed(v2);
-                break;
-            case 'enemySpeed': // set enemy speed
-                setEnemySpeed(v2);
-                break;
-            case 'enemySpawn': // introduce extra warder object
-                spawn();
-                break;
-            case 'setFaults':
-                window.gs.nFaults = v2;
-                window.update_status_bar();
-                break;
-
-            default:
-        }
-        return 0;
-    }
-    function newGameInit(origin){
-        window.gd = new GameDef();
-        window.gs = new GameState(window.gd);
-        init_canvas_container()
-        window.gs.iLevel = 1;
-        window.gs.startLevelStateCells(1);
-
-    }
-    window.CA_CLEAR = 1 << 0;
-    window.CA_TRAIL = 1 << 1;
-    // dimensions:
-    var sizeCell;
-    var width, height;
-    // Accumulators for fractional movement
-    var cursorMoveRemainder = 0;
-    var enemyMoveRemainder = 0;
-    // host objects:
-    // var elContainer;
-    // var ctxPic;
-
-    var imgPic;
-    var imgBall;
-    var imgWarder;
-    var imgCursor;
-
-    // Ensure arrays and counters exist without clobbering any previously populated state
-    // window.ls.aBalls = window.ls.aBalls || [];
-    // window.ls.aWarders = window.ls.aWarders || [];
-    // window.ls.nBalls = (typeof window.ls.nBalls === 'number') ? window.ls.nBalls : 0;
-    // window.ls.nWarders = (typeof window.ls.nWarders === 'number') ? window.ls.nWarders : 0;
-    window.flashEffect = function({ color='white', opacity=1, duration=400, repeat=1 } = {}) {
-        // find div by id flashOverlay.id = 'flash-overlay';
-        const f = document.getElementById('flash-overlay');
-        if (!f) return;
-        f.style.background = color;
-        f.style.transition = `opacity ${duration}ms ease-in-out`;
-        let n = 0;
-        const doFlash = () => {
-            f.style.opacity = opacity;
-            setTimeout(() => { f.style.opacity = 0; }, duration / 2);
-            if (++n < repeat) setTimeout(doFlash, duration);
-        };
-        doFlash();
-    }
-
-    function add_flash_overlay(){
-        const flashOverlay = document.createElement('div');
-        flashOverlay.id = 'flash-overlay';
-        // The canvases are appended with position:absolute, so their parent
-        // (`window.var_oWrap`) may collapse to zero size. Compute explicit
-        // dimensions so the overlay covers the main canvas area.
-        const sizeCell = window.gd && window.gd.cfgMain? window.gd.cfgMain.sizeCell : 10;
-        const mainW = window.gd && window.gd.cfgMain? window.gd.cfgMain.width + 4 * sizeCell : 600 + 4 * sizeCell;
-        const mainH = window.gd && window.gd.cfgMain? window.gd.cfgMain.height + 4 * sizeCell : 400 + 4 * sizeCell;
-        Object.assign(flashOverlay.style, {
-            position: 'absolute',
-            left: '0px',
-            top: '0px',
-            width: mainW + 'px',
-            height: mainH + 'px',
-            background: 'white',
-            opacity: 0,
-            pointerEvents: 'none',
-            zIndex: 9999,
-            transition: 'opacity 0.3s ease-in-out'
-        });
-        window.var_oWrap.appendChild(flashOverlay);
-     }
-
-    function init_canvas_container() {
-        sizeCell = window.gd.cfgMain.sizeCell;
-        //setLevelData(window.gd.cfgMain.width, window.gd.cfgMain.height);
-        window.gs.create_imgbg()
-        window.gs.create_maincanvas()
-        add_flash_overlay()
-        // create temp canvas:
-        var canvas = document.createElement('canvas');
-        var ctxTmp = canvas.getContext('2d');
-        canvas.width = sizeCell;
-        canvas.height = sizeCell;
-        // prepare ball image:
-        var r = sizeCell / 2, q = sizeCell / 4;
-        ctxTmp.clearRect(0, 0, sizeCell, sizeCell);
-        ctxTmp.beginPath();
-        ctxTmp.arc(r, r, r, 0, Math.PI * 2, false);
-        ctxTmp.fillStyle = window.gd.cfgMain.colorBall;
-        ctxTmp.fill();
-        if (window.gd.cfgMain.colorBallIn) {
-            ctxTmp.beginPath();
-            ctxTmp.arc(r, r, q, 0, Math.PI * 2, false);
-            ctxTmp.fillStyle = window.gd.cfgMain.colorBallIn;
-            ctxTmp.fill();
-        }
-        imgBall = new Image();
-        imgBall.src = ctxTmp.canvas.toDataURL();
-        function prepareSquare(colorOut, colorIn, opacity=1) {
-            ctxTmp.clearRect(0, 0, sizeCell, sizeCell);
-            ctxTmp.globalAlpha = opacity;
-            ctxTmp.fillStyle = colorOut;
-            ctxTmp.fillRect(0, 0, sizeCell, sizeCell);
-            if (colorIn) {
-            ctxTmp.fillStyle = colorIn;
-            ctxTmp.fillRect(q, q, sizeCell - r, sizeCell - r);
-            }
-            ctxTmp.globalAlpha = 1;
-        }
-        // prepare warder image:
-        prepareSquare(window.gd.cfgMain.colorWarder, window.gd.cfgMain.colorWarderIn);
-        imgWarder = new Image();
-        imgWarder.src = ctxTmp.canvas.toDataURL();
-        // prepare cursor image:
-        var opacity = window.ls? (window.ls.ignoreCollisionBonus? 0.5 : 1) : 1
-        prepareSquare(window.gd.cfgMain.colorCursor, window.gd.cfgMain.colorCursorIn, opacity);
-        imgCursor = new Image();
-        imgCursor.src = ctxTmp.canvas.toDataURL();
-        window.var_imgCursor = imgCursor
-        window.var_imgWarder = imgWarder
-        window.var_imgBall = imgBall
-        window.update_status_bar('init')
-        return true;
-    }
-
-    window.loadLevel = function() {
-        // Always reset state before loading a new level (for Try Again)
-        window.gs.endLevel(false); // Ensure previous animation loop and state are cleared
-        window.ls.loadImgwithLevel()
-
-        window.stageData = window.stageData || {};
-        window.stageData.area = window.stageData.area || 0;
-        window.stageData.cum_area = window.stageData.cum_area || 0;
-        window.stageData.bonus = window.stageData.bonus || 'not set';
-    }
-
-window.update_status_bar = function(stage='update') {
-    if(stage == 'init' || stage == 'quit'){
-        $("#status-progress-current").html('-');
-        $("#status-time").html('--:--');
-        $("#status-points").html('-');
-        $('#status-speed').html('-');
-        $('#status-enemy').html('-');
-        $('#status-life').html('-');
-        $('#status-score').html('-');
-
-    }else if(stage == 'reset'){
-        $("#status-progress-current").html('1');
-        $("#status-time").html('00:00');
-        $("#status-points").html('0');
-        $('#status-speed').html(window.gs.speedCursor);
-        $('#status-enemy').html(window.ls.speedEnemy);
-        $('#status-life').html(window.gs.nFaults);
-        $('#status-score').html(window.gs.score.toFixed(0));
-
-    }else{
-        $('#status-speed').html(window.gs.speedCursor+window.gs.speedBonus);
-        $('#status-enemy').html((window.ls.speedEnemy - window.ls.speedEnemyReduce).toFixed(1));
-        $('#status-life').html(window.gs.nFaults);
-        $('#status-score').html(window.gs.score.toFixed(0));
-    }
+/** Attach the canvas container div to the given DOM element. */
+export function initWrapperEl(el) {
+    game.wrapEl = document.createElement('div');
+    game.wrapEl.style.position = 'relative';
+    el.appendChild(game.wrapEl);
 }
 
-window.render = function() {
-        window.cellset.render();
-        window.stageData.bonus.render(window.gd.cfgMain, window.gs.ctxMain);
-        window.cursor.render();
-        var i;
-        for (i = 0; i < window.ls.nBalls; i++) window.ls.aBalls[i].render();
-        for (i = 0; i < window.ls.nWarders; i++) window.ls.aWarders[i].render();
-    }
+/** Create a fresh GameConfig + GameState; wire up the game loop reference. */
+export function newGame() {
+    game.config = new GameConfig();
 
-window.fn_lock = function() {
-        window.gs.tLastFrame = 0;
-        window.gs.bCollision = false;
-        var posCr = window.cursor.pos();
-        window.cellset.add2Trail(posCr[0], posCr[1], false);
-        setTimeout(window.fn_unlock, window.gd.cfgMain.timeoutCollision);
-    }
-
-window.fn_unlock = function() {
-        if (!window.gs.tLevel) return;
-        window.cellset.clearTrail();
-        var pos = window.cellset.placeCursor();
-        window.cursor.reset(pos[0], pos[1], true);
-        var aPos = window.cellset.placeWarders(window.ls.nWarders);
-        for (var i = 0; i < window.ls.nWarders; i++)
-            window.ls.aWarders[i].reset(aPos[i][0], aPos[i][1]);
-        window.gs.startLoop();
-    }
-
-window.fn_spawn = function() {
-        if (!window.gs.tLevel) return;
-        var pos = window.cellset.placeSpawned();
-        if (!pos) return;
-        window.ls.aWarders.push(new Enemy(pos[0], pos[1], true));
-        window.ls.nWarders++;
-    }
-
-window.fn_loop = function(now) {
-        var dt = window.gs.tLastFrame? (now - window.gs.tLastFrame) / 1000 : 0;
-        // console.log(window.gs.tLastFrame , dt)
-        window.gs.bCollision = window.gs.bConquer = false;
-
-        var need_render = !window.gs.tLastFrame || window.fn_update(dt) && window.gs.bPlay
-        var need_timeUpdate = !window.gs.tLastFrame || window.gs.bPlay
-        if (need_render)
-            {
-                window.render();
-                // console.log('---------------------------------------------------------rendered')
-            }
-        if(need_timeUpdate) window.gs.tLastFrame = now;
-        if (window.gs.bCollision) {
-            window.fn_lock();
-            window.afterFault();
-            return;
+    // Apply game-wide settings from settings.json
+    const s = game.settingsData;
+    if (s) {
+        if (s.gridCols != null)  game.config.gridCols  = s.gridCols;
+        if (s.gridRows != null)  game.config.gridRows  = s.gridRows;
+        if (s.cellSize != null)  game.config.cellSize  = s.cellSize;
+        if (s.image_folder)      game.config.imageFolder = s.image_folder;
+        if (s.initial_lives != null) game.config.initialLives = s.initial_lives;
+        if (s.fullscreen_statusbar != null) game.config.fullscreenStatusbar = s.fullscreen_statusbar;
+        if (s.tank_auto_stop != null) game.config.tankAutoStop = s.tank_auto_stop;
+        const colorKeys = ['colorEmpty','colorBorder','colorBall','colorBallCenter',
+            'colorWarder','colorWarderCenter','colorCursor','colorCursorCenter',
+            'colorCursorEffect','colorTrail'];
+        for (const k of colorKeys) {
+            if (s[k] != null) game.config[k] = s[k];
         }
-        if (window.gs.bConquer) {
-            window.gs.bConquer = false;
-            window.gs.tLastFrame = 0;
-            const points_check = [[window.stageData.bonus.x, window.stageData.bonus.y ]];
-            const bonus_captured = window.cellset.conquer(points_check);
-            if (bonus_captured[0]){
-                window.stageData.bonus.active = false
-                console.log('----- Bonus conquered area, removed.')
-            }
-            // var data = buildLevelState();
-            var cleared = window.cellset.getConqueredRatio()
-            window.gs.bConquer = true;
-
-            window.fn_postConquer(cleared, window.ls.target_area)
-        }
-        else{
-            window.fn_updateTime();
-        }
-        window.gs.startLoop();
     }
 
-    // The set of available directions:
-window.var_dirset = {
-        vecs: {
-            0: [1, 0], 45: [1, 1], 90: [0, 1], 135: [-1, 1], 180: [-1, 0], 225: [-1, -1], 270: [0, -1], 315: [1, -1]
-        },
-        get: function(v) {
-            return v in this.vecs? this.vecs[v] : [0, 0];
-        },
-        find: function(x, y) {
-            x = x == 0? 0 : (x > 0? 1 : -1);
-            y = y == 0? 0 : (y > 0? 1 : -1);
-            for (var v in this.vecs) {
-                var vec = this.vecs[v];
-                if (vec[0] == x && vec[1] == y) return parseInt(v);
-            }
-            return false;
+    if (game.levelsData.length) game.config.levels = game.levelsData;
+    game.state  = new GameState(game.config);
+    game.state.lives = game.config.initialLives;
+    game.loopFn = _gameLoop;
+
+    _initCanvasContainer();
+
+    game.state.levelIndex = 1;
+    _initLevelState(1);
+}
+
+/** Stop play and reset the status bar to its idle state. */
+export function quitGame() {
+    game.state.isPlaying  = false;
+    game.state.isStarted  = false;
+    game.state.stopLoop();
+    game.state.levelStartTime = 0;
+    game.ui.updateStatus('quit');
+}
+
+/**
+ * Load the background image for the current level, then start the game loop.
+ * Always resets level state so "Try Again" starts cleanly.
+ */
+export function loadCurrentLevel() {
+    endLevel(false);   // stop any running loop first
+    _initLevelState(game.state.levelIndex);
+    game.clearedArea = 0;
+    game.level.loadImage(_applyLevelImage);
+}
+
+/**
+ * Stop the current level.
+ * @param {boolean} success – when true, animate the field clearing and call
+ *   game.ui.onLevelComplete() afterwards.
+ */
+export function endLevel(success) {
+    game.state.stopLoop();
+    game.state.totalElapsedSeconds += game.state.levelElapsedSeconds;
+    game.state.levelStartTime = 0;
+    game.state.lastFrameTime  = 0;
+    game.state.hasCollision   = false;
+
+    // Cancel any in-flight timed bonus effects (sneaky, freez, tank).
+    _deactivateActiveTimedBonus();
+
+    if (!success) return;
+
+    setTimeout(() => {
+        _animateLevelClear(() => game.ui.onLevelComplete());
+    }, LEVEL_CLEAR_DELAY);
+}
+
+/** Handle a keyboard direction input. */
+export function setCursorDirection(keyName) {
+    if (!game.state.lastFrameTime) return;
+    const map = { left: 180, right: 0, up: 270, down: 90, stop: false };
+    if (keyName in map) game.cursor.setDirection(map[keyName]);
+}
+
+/** Point the cursor toward a canvas pixel position [canvasX, canvasY]. */
+export function setCursorDirectionToward(canvasPos) {
+    if (!game.state.lastFrameTime || !canvasPos || canvasPos.length < 2) return;
+
+    const cs = game.config.cellSize;
+    const xc = Math.floor(canvasPos[0] / cs) - 2;
+    const yc = Math.floor(canvasPos[1] / cs) - 2;
+    if (!game.grid.isPositionValid(xc, yc)) return;
+
+    const [cx, cy] = game.cursor.pos();
+    const curDir   = game.cursor.getDirection();
+    let newDir     = false;
+
+    if (curDir === false) {
+        const dx = xc - cx, dy = yc - cy;
+        const dc = Math.abs(dx) - Math.abs(dy);
+        if (dc === 0) return;
+        newDir = dirs.find(dx, dy);
+        if (newDir % 90 !== 0) {
+            const d1 = newDir - 45, d2 = newDir + 45;
+            newDir = (d1 % 180 === 0) ^ (dc < 0) ? d1 : d2;
         }
+    } else {
+        const delta = (curDir % 180) ? xc - cx : yc - cy;
+        if (!delta) return;
+        newDir = (delta > 0 ? 0 : 180) + (curDir % 180 ? 0 : 90);
+    }
+
+    game.cursor.setDirection(newDir);
+}
+
+export function setCursorSpeed(n) {
+    if (n > 0) game.state.cursorSpeed = n;
+}
+
+export function setEnemySpeed(n) {
+    if (typeof n === 'number' && n > 0) game.level.enemySpeed = n;
+}
+
+/** Place an extra warder on the field (up to 9 total). */
+export function spawnWarder() {
+    const pos = game.grid.getSpawnPosition();
+    if (!pos) return;
+    game.level.warders.push(new Enemy(pos[0], pos[1], true));
+    game.level.warderCount++;
+}
+
+/**
+ * Flash the canvas overlay briefly.
+ * @param {object} opts  color, opacity, duration (ms), repeat count
+ */
+export function flashEffect({ color = 'white', opacity = 1, duration = 400, repeat = 1 } = {}) {
+    const overlay = document.getElementById('flash-overlay');
+    if (!overlay) return;
+    overlay.style.background   = color;
+    overlay.style.transition   = `opacity ${duration}ms ease-in-out`;
+    let count = 0;
+    const doFlash = () => {
+        overlay.style.opacity = opacity;
+        setTimeout(() => { overlay.style.opacity = 0; }, duration / 2);
+        if (++count < repeat) setTimeout(doFlash, duration);
     };
+    doFlash();
+}
 
-    function merge(dest, src, bFilter) {
-        if (!src) return dest;
-        for(var key in dest) {
-            if (!dest.hasOwnProperty(key) || !src.hasOwnProperty(key)) continue;
-            var v = src[key];
-            if ((!bFilter || v) && (typeof v != 'number' || v >= 0))
-                dest[key] = v;
+// ── Canvas / level setup ───────────────────────────────────────────────────────
+
+function _initLevelState(levelIndex) {
+    game.state.levelIndex = levelIndex;
+    const ld = game.levelsData[levelIndex - 1];
+    const imageFile = ld && ld.image ? ld.image : null;
+    game.level = new LevelConfig(levelIndex, imageFile);
+
+    if (ld) {
+        game.level.ballCount          = ld.ballCount          ?? game.level.ballCount;
+        game.level.warderCount        = ld.warderCount        ?? game.level.warderCount;
+        game.level.targetAreaPercent  = ld.targetAreaPercent  ?? game.level.targetAreaPercent;
+        game.level.bonusTypes         = ld.bonusTypes         ?? ['tank'];
+
+        // Use game-wide carry_over_speed setting.
+        const carryOver = game.settingsData?.carry_over_speed ?? false;
+        if (!carryOver || levelIndex === 1) {
+            game.level.enemySpeed  = ld.enemySpeed  ?? game.level.enemySpeed;
+            if (ld.cursorSpeed != null) game.state.cursorSpeed = ld.cursorSpeed;
         }
-        return dest;
+    } else {
+        game.level.bonusTypes = ['tank'];
     }
 
-})();
+    game.cursorMoveAcc = 0;
+    game.enemyMoveAcc  = 0;
+    game.grid   = game.grid   || new Grid();
+    game.cursor = game.cursor || new Cursor();
+    game.grid.reset();
+
+    game.ui.updateStatus('update');
+}
+
+function _initCanvasContainer() {
+    // Clear any canvases from a previous game (Play Again).
+    game.wrapEl.innerHTML = '';
+
+    const cfg = game.config;
+    const cs  = cfg.cellSize;
+    const totalW = cfg.canvasWidth  + 4 * cs;
+    const totalH = cfg.canvasHeight + 4 * cs;
+
+    // Give the wrapper explicit dimensions so CSS zoom/transform scales correctly.
+    game.wrapEl.style.position = 'relative';
+    game.wrapEl.style.width    = totalW + 'px';
+    game.wrapEl.style.height   = totalH + 'px';
+
+    // ── Background canvas (level image / revealed cells) ──────────────────────
+    const bgCanvas    = document.createElement('canvas');
+    game.state.bgCtx  = bgCanvas.getContext('2d');
+    bgCanvas.width    = cfg.canvasWidth;
+    bgCanvas.height   = cfg.canvasHeight;
+    bgCanvas.style.cssText = `position:absolute; left:${2 * cs}px; top:${2 * cs}px;`;
+    game.state.bgCtx.fillStyle = cfg.colorTrail;
+    game.state.bgCtx.fillRect(0, 0, cfg.canvasWidth, cfg.canvasHeight);
+    game.wrapEl.appendChild(bgCanvas);
+
+    // ── Main game canvas (sprites, trail, border ring) ────────────────────────
+    const mainCanvas    = document.createElement('canvas');
+    game.state.mainCtx  = mainCanvas.getContext('2d');
+    mainCanvas.width    = cfg.canvasWidth  + 4 * cs;
+    mainCanvas.height   = cfg.canvasHeight + 4 * cs;
+    mainCanvas.style.cssText = 'position:absolute; left:0; top:0;';
+    game.state.fillCanvas();
+    game.state.mainCtx.fillStyle = cfg.colorEmpty;
+    game.state.mainCtx.fillRect(2 * cs, 2 * cs, cfg.canvasWidth, cfg.canvasHeight);
+    game.wrapEl.appendChild(mainCanvas);
+
+    // ── Flash overlay ─────────────────────────────────────────────────────────
+    const flashEl = document.createElement('div');
+    flashEl.id    = 'flash-overlay';
+    Object.assign(flashEl.style, {
+        position:      'absolute',
+        left:          '0', top: '0',
+        width:         `${cfg.canvasWidth  + 4 * cs}px`,
+        height:        `${cfg.canvasHeight + 4 * cs}px`,
+        background:    'white',
+        opacity:       0,
+        pointerEvents: 'none',
+        zIndex:        9999,
+        transition:    'opacity 0.3s ease-in-out',
+    });
+    game.wrapEl.appendChild(flashEl);
+
+    // ── Sprite images ─────────────────────────────────────────────────────────
+    _buildSprites();
+
+    game.ui.updateStatus('init');
+}
+
+function _buildSprites() {
+    const cfg    = game.config;
+    const cs     = cfg.cellSize;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = cs;
+    const ctx = canvas.getContext('2d');
+    const r   = cs / 2, q = cs / 4;
+
+    // Ball
+    ctx.clearRect(0, 0, cs, cs);
+    ctx.beginPath(); ctx.arc(r, r, r, 0, Math.PI * 2);
+    ctx.fillStyle = cfg.colorBall; ctx.fill();
+    if (cfg.colorBallCenter) {
+        ctx.beginPath(); ctx.arc(r, r, q, 0, Math.PI * 2);
+        ctx.fillStyle = cfg.colorBallCenter; ctx.fill();
+    }
+    game.images.ball = _canvasToImage(canvas);
+
+    // Warder
+    ctx.clearRect(0, 0, cs, cs);
+    ctx.fillStyle = cfg.colorWarder;       ctx.fillRect(0, 0, cs, cs);
+    ctx.fillStyle = cfg.colorWarderCenter; ctx.fillRect(q, q, r, r);
+    game.images.warder = _canvasToImage(canvas);
+
+    // Cursor (opacity reflects invincibility state)
+    _rebuildCursorSprite(ctx, canvas);
+}
+
+function _rebuildCursorSprite(ctx, canvas) {
+    const cfg     = game.config;
+    const cs      = cfg.cellSize;
+    const q       = cs / 4, r = cs / 2;
+    const opacity = game.level?.isInvincible ? 0.5 : 1;
+    ctx = ctx || (() => { const c = document.createElement('canvas'); c.width = c.height = cs; return c.getContext('2d'); })();
+    canvas = canvas || ctx.canvas;
+    ctx.clearRect(0, 0, cs, cs);
+    ctx.globalAlpha = opacity;
+    ctx.fillStyle   = cfg.colorCursor;       ctx.fillRect(0, 0, cs, cs);
+    ctx.fillStyle   = cfg.colorCursorCenter; ctx.fillRect(q, q, r, r);
+    ctx.globalAlpha = 1;
+    game.images.cursor = _canvasToImage(canvas);
+}
+
+function _canvasToImage(canvas) {
+    const img = new Image();
+    img.src   = canvas.toDataURL();
+    return img;
+}
+
+// ── Level loading ─────────────────────────────────────────────────────────────
+
+function _applyLevelImage(img) {
+    const cfg = game.config;
+    const cs  = cfg.cellSize;
+    const w   = cfg.canvasWidth, h = cfg.canvasHeight;
+
+    // Resize canvases to match the loaded image dimensions.
+    game.state.mainCtx.canvas.width  = w + 4 * cs;
+    game.state.mainCtx.canvas.height = h + 4 * cs;
+    game.state.fillCanvas();
+
+    game.grid.reset();
+
+    game.state.bgCtx.canvas.width  = w;
+    game.state.bgCtx.canvas.height = h;
+    game.state.bgCtx.drawImage(img, 0, 0, w, h);
+
+    // Place cursor.
+    const cursorPos = game.grid.getInitialCursorPos();
+    game.cursor.reset(cursorPos[0], cursorPos[1]);
+
+    // Rebuild cursor sprite (invincibility may have changed since last level).
+    _rebuildCursorSprite();
+
+    // Create enemies.
+    game.level.balls   = [];
+    game.level.warders = [];
+
+    const ballPositions   = game.grid.getRandomBallPositions(game.level.ballCount);
+    const warderPositions = game.grid.getWarderStartPositions(game.level.warderCount);
+
+    for (const [bx, by] of ballPositions)
+        game.level.balls.push(new Enemy(bx, by, false));
+    for (const [wx, wy] of warderPositions)
+        game.level.warders.push(new Enemy(wx, wy, true, 45));
+
+    // Reset per-level bonus spawn tracking.
+    game.bonusSpawnedCount = 0;
+    game.bonus = null;
+
+    // Start timing.
+    game.state.levelStartTime    = Date.now();
+    game.state.lastFrameTime     = 0;
+    game.state.levelElapsedSeconds = 0;
+
+    // Reset per-level conquest milestone tracking.
+    game.bannerMilestones = new Set();
+
+    game.state.startLoop();
+    if (game.ui.showGoOn) game.ui.showGoOn();
+}
+
+// ── Level clear animation ─────────────────────────────────────────────────────
+
+function _animateLevelClear(onDone) {
+    const cfg      = game.config;
+    const cs       = cfg.cellSize;
+    const ctx      = game.state.mainCtx;
+    const range    = game.grid.getActiveColumnRange();
+    if (!range) { onDone(); return; }
+
+    const [minX, maxX] = range;
+    const startPx  = minX * cs;
+    const totalW   = (maxX - minX) * cs;
+    const totalH   = cfg.canvasHeight;
+    const duration = LEVEL_CLEAR_DURATION;
+    const t0       = performance.now();
+
+    let frameId = 0;
+    function step(now) {
+        const elapsed = now - t0;
+        const sweep   = Math.ceil(totalW * Math.min(elapsed / duration, 1));
+        ctx.clearRect(2 * cs + startPx, 2 * cs, sweep, totalH);
+
+        if (elapsed < duration) {
+            frameId = requestAnimationFrame(step);
+        } else {
+            ctx.clearRect(2 * cs, 2 * cs, cfg.canvasWidth, cfg.canvasHeight);
+            onDone();
+        }
+    }
+    frameId = requestAnimationFrame(step);
+}
+
+
+// ── Main game loop ────────────────────────────────────────────────────────────
+function _gameLoop(now) {
+    const state = game.state;
+    state.hasCollision = state.hasConquered = false;
+
+    const needRender = !state.lastFrameTime || (_updateFrame(now) && state.isPlaying);
+
+    if (needRender) _renderFrame();
+    if (!state.lastFrameTime || state.isPlaying) state.lastFrameTime = now;
+
+    if (state.hasCollision) {
+        _lockAfterCollision();
+        _handleFault();
+        return;
+    }
+
+    if (state.hasConquered) {
+        state.hasConquered   = false;
+        state.lastFrameTime  = 0;
+
+        const bonusHit  = game.grid.conquerRegions([[game.bonus?.x, game.bonus?.y]]);
+        game.sneakyConquer = false;
+        if (bonusHit[0]) game.bonus = null;
+
+        const cleared   = game.grid.getConqueredPercent();
+        state.hasConquered = true;
+        _handleConquer(cleared, game.level.targetAreaPercent);
+    } else {
+        _updateLevelTimer();
+    }
+
+    state.startLoop();
+}
+
+function _renderFrame() {
+    game.grid.render();
+    if (game.bonus) game.bonus.render();
+    game.cursor.render();
+    for (const ball   of game.level.balls)   ball.render();
+    for (const warder of game.level.warders) warder.render();
+}
+
+function _updateFrame(now) {
+    const state = game.state;
+    const level = game.level;
+    const dt    = state.lastFrameTime ? (now - state.lastFrameTime) / 1000 : 0;
+
+    if (game.cursor.direction === false)
+        game.cursorMoveAcc = 0;
+    else
+        game.cursorMoveAcc += dt * (state.cursorSpeed + state.bonusSpeed);
+
+    game.enemyMoveAcc += dt * Math.max(0, level.enemySpeed - level.enemySlowdown);
+
+    const cursorSteps = Math.floor(game.cursorMoveAcc);
+    const enemySteps  = Math.floor(game.enemyMoveAcc);
+    game.cursorMoveAcc -= cursorSteps;
+    game.enemyMoveAcc  -= enemySteps;
+
+    if (cursorSteps < 1 && enemySteps < 1) return false;
+
+    game.cursor.update(cursorSteps);
+
+    // Bonus pickup check.
+    if (game.bonus && cursorSteps >= 1) {
+        if (game.bonus.containsPoint(game.cursor.pos())) game.bonus.apply();
+    }
+
+    for (const ball   of game.level.balls)   ball.update(enemySteps);
+    for (const warder of game.level.warders) warder.update(enemySteps);
+
+    return true;
+}
+
+function _updateLevelTimer() {
+    const elapsed = Math.floor((Date.now() - game.state.levelStartTime) / 1000);
+    if (elapsed - game.state.levelElapsedSeconds < 1) return;
+    game.state.levelElapsedSeconds = elapsed;
+
+    const total = elapsed + game.state.totalElapsedSeconds;
+    const mm    = String(Math.floor(total / 60)).padStart(2, '0');
+    const ss    = String(total % 60).padStart(2, '0');
+    document.getElementById('status-time').textContent = `${mm}:${ss}`;
+    const fsTime = document.getElementById('fs-s-time');
+    if (fsTime) fsTime.textContent = `${mm}:${ss}`;
+}
+
+// ── Collision handling ────────────────────────────────────────────────────────
+
+function _lockAfterCollision() {
+    game.state.lastFrameTime = 0;
+    game.state.hasCollision  = false;
+    const [cx, cy] = game.cursor.pos();
+    game.grid.addToTrail(cx, cy, false);
+    setTimeout(_unlockAfterCollision, COLLISION_TIMEOUT);
+}
+
+function _unlockAfterCollision() {
+    if (!game.state.levelStartTime) return;
+    game.grid.resetTrail();
+    const pos = game.grid.getInitialCursorPos();
+    game.cursor.reset(pos[0], pos[1], true);
+    const warderPositions = game.grid.getWarderStartPositions(game.level.warderCount);
+    for (let i = 0; i < game.level.warderCount; i++)
+        game.level.warders[i].reset(warderPositions[i][0], warderPositions[i][1]);
+    game.state.startLoop();
+}
+
+function _handleFault() {
+    game.state.lives--;
+
+    // Fault cancels any currently active timed bonus effect immediately.
+    _deactivateActiveTimedBonus();
+
+    game.ui.updateStatus('update');
+    if (game.state.lives > 0) {
+        if (game.ui.showOops) game.ui.showOops();
+        else game.ui.setBanner('Oops..');
+        return;
+    }
+
+    if (game.ui.showGameOver) game.ui.showGameOver();
+    else game.ui.setBanner('GAME OVER');
+    game.state.isPlaying = game.state.isStarted = false;
+    endLevel(false);
+    game.ui.onFault();
+}
+
+// ── Conquest handling ─────────────────────────────────────────────────────────
+
+function _handleConquer(clearedPercent, targetPercent) {
+    const prevCleared = game.clearedArea;
+    const incremental = clearedPercent - prevCleared;
+    game.state.score += incremental;
+    game.clearedArea  = clearedPercent;
+
+    document.getElementById('status-points').textContent = `${clearedPercent.toFixed(0)}%`;
+    const fsPoints = document.getElementById('fs-s-points');
+    if (fsPoints) fsPoints.textContent = `${clearedPercent.toFixed(0)}%`;
+    game.ui.updateStatus('conquer');
+
+    // Show conquer banner only when floodfill conquered a region beyond the trail.
+    if (incremental > 0 && game.grid.lastConquerRectCount > 0) {
+        const halfwayThreshold = targetPercent / 2;
+        const crossedHalfway = prevCleared < halfwayThreshold && clearedPercent >= halfwayThreshold;
+        if (game.ui.showConquer) {
+            game.ui.showConquer(incremental, crossedHalfway, {});
+        }
+
+        _trySpawnBonusAfterConquer();
+    }
+
+    if (clearedPercent < targetPercent) return;
+
+    // Level complete.
+    if (game.ui.showLevelComplete) game.ui.showLevelComplete();
+    flashEffect({ duration: 50, opacity: 0.9 });
+    endLevel(true);
+}
+
+function _deactivateActiveTimedBonus() {
+    for (const t of game.activeEffectTimers) clearTimeout(t);
+    game.activeEffectTimers = [];
+
+    for (const cleanup of game.activeEffectCleanups) cleanup();
+    game.activeEffectCleanups = [];
+
+    game.bonusTimerActive = false;
+    game.bonusTimerExpiresAt = 0;
+
+    if (game.level) {
+        game.level.isInvincible = false;
+        game.level.enemySlowdown = 0;
+        if (game.level.tankMode) {
+            game.level.tankMode = false;
+            game.level.tankTimeout = null;
+            game.level.tankClearedCells = null;
+            game.level.saved_copy_trail = null;
+            game.level.saved_copy_trail_nodes = null;
+            game.level.saved_copy_trail_direction = null;
+            game.level.saved_copy_trail_pre_index = null;
+            game.grid.resetTrail(false);
+            game.cursor.isOnTrail = false;
+            if (game.config.tankAutoStop) game.cursor.direction = false;
+        }
+    }
+
+    rebuildCursorSprite(false);
+}
+
+function _trySpawnBonusAfterConquer() {
+    if (!_canSpawnBonusNow()) return;
+
+    const g = game.grid;
+    const spawnType = game.level.bonusTypes[Math.floor(Math.random() * game.level.bonusTypes.length)];
+    const spawned = Bonus.random(BONUS_MARGIN, BONUS_MARGIN, g.cols - BONUS_MARGIN, g.rows - BONUS_MARGIN, spawnType);
+    if (spawned) {
+        game.bonus = spawned;
+        game.bonusSpawnedCount = (game.bonusSpawnedCount || 0) + 1;
+    }
+}
+
+function _canSpawnBonusNow() {
+    if (game.bonus) return false;
+    if (game.bonusTimerActive) return false;
+    if (game.level?.tankMode) return false;
+    if (game.grid.trail.length > 0) return false;
+    if (game.clearedArea >= BONUS_SPAWN_CLEARED_THRESHOLD) return false;
+
+    const enableThreeBonusRule = !!game.settingsData?.three_bonus;
+    if (!enableThreeBonusRule) return true;
+
+    const milestones = [10, 25, 45];
+    const spawnedCount = game.bonusSpawnedCount || 0;
+    if (spawnedCount >= milestones.length) return false;
+    return game.clearedArea >= milestones[spawnedCount];
+}

@@ -1,552 +1,691 @@
-// The playing field grid (set of available cells) implemented as a class
-export class CellSet {
+﻿import { CELL_CLEARED, CELL_TRAIL, dirs, MAX_WARDERS } from './constants.js';
+import { game } from './gamestate.js';
+
+/**
+ * The playing-field grid.
+ *
+ * The physical grid is (cols + 4) x (rows + 4) cells: the extra 2-cell border
+ * on every side allows enemies and the cursor to exist just outside the visible
+ * area.  Cell (x, y) with x in [-2, cols+1] / y in [-2, rows+1] is valid.
+ */
+export class Grid {
     constructor() {
-        this.nW = 0; // width of image in cells
-        this.nH = 0; // height of image in cells
-        this.nWx = 0; // width of grid in cells
-        this.nConquered = 0; // number of conquered cells
-        // this.allConqueredRect = [];
-        this.dirTrail = 0; // last direction of the cursor trail (movement)
-        this.cellPreTrail = 0; // index of cell preceding the cursor trail cells
-        this.aCells = []; // array mapping cell index in the grid to a value indicating type of this cell
-        this.aTrail = []; // array of the cursor trail cells' indices
-        this.aTrailNodes = []; // array of the cursor trail node cells' indices
-        this.aTrailRects = []; // array of rectangles comprising the cursor trail line
-        //this.reset();
+        this.cols  = 0;   // playfield width in cells
+        this.rows  = 0;   // playfield height in cells
+        this.stride = 0;  // row stride = cols + 4  (width of the extended grid)
+
+        this.conqueredCount = 0;   // number of cells that have been cleared
+        this.lastConquerRectCount = 0;
+
+        this.trailDirection    = 0;   // movement angle of the most-recent trail segment
+        this.preTrailCellIndex = 0;   // index of the cell immediately before the trail
+
+        this.cells      = [];   // flat array: one uint per extended-grid cell
+        this.trail      = [];   // indices of cells in the active cursor trail
+        this.trailNodes = [];   // indices of direction-change points in the trail
+        this.trailRects = [];   // dirty rectangles queued for repaint
     }
 
+    /** Re-initialise grid state for a new level. */
     reset() {
-        this.nW = window.gd.nW;
-        this.nH = window.gd.nH;
-        var n = (this.nWx = this.nW+4)* (this.nH+4);
-        this.nConquered = 0;
-        this.aCells = [];
-        var aAll = [];
-        for (var i = 0; i < n; i++) {
-            var pos = this.pos(i), x = pos[0], y = pos[1];
-            this.aCells.push(x >= 0 && x < this.nW && y >= 0 && y < this.nH? 0 : window.CA_CLEAR);
-            aAll.push(i);
+        this.cols   = game.config.gridCols;
+        this.rows   = game.config.gridRows;
+        this.stride = this.cols + 4;
+
+        const total = this.stride * (this.rows + 4);
+        this.conqueredCount = 0;
+        this.lastConquerRectCount = 0;
+        this.cells = [];
+
+        for (let i = 0; i < total; i++) {
+            const [x, y] = this.cellPos(i);
+            // Border cells are pre-cleared; interior cells start as unexplored (0).
+            this.cells.push(x >= 0 && x < this.cols && y >= 0 && y < this.rows
+                ? 0 : CELL_CLEARED);
         }
-        this.aTrail = [];
-        this.aTrailNodes = [];
-        this.aTrailRects = [];
-        window.gs.fillCellArea(window.gd.cfgMain.colorFill, 0, 0, this.nW, this.nH);
+
+        this.trail      = [];
+        this.trailNodes = [];
+        this.trailRects = [];
+
+        game.state.fillCells(game.config.colorEmpty, 0, 0, this.cols, this.rows);
     }
 
+    /**
+     * Repaint any trail segments that were queued during the last update step.
+     * Called once per frame before drawing sprites.
+     */
     render() {
-        if (this.aTrailRects.length) {
-            for (var i = this.aTrailRects.length-1; i >= 0; i--) {
-                window.gs.fillCellArea(window.gd.cfgMain.colorFill, ...this.aTrailRects[i]);
-                // window.gs.fillCellArea.apply(null, [window.gd.cfgMain.colorFill].concat(this.aTrailRects[i]));
-            }
-            this.aTrailRects = [];
+        for (let i = this.trailRects.length - 1; i >= 0; i--) {
+            game.state.fillCells(game.config.colorEmpty, ...this.trailRects[i]);
         }
+        this.trailRects = [];
     }
 
-    isPosIn(x, y) {
-        return x >= 0 && x < this.nW && y >= 0 && y < this.nH;
+    // ── Position helpers ────────────────────────────────────────────────────
+
+    /** True when (x, y) is within the visible playfield. */
+    isInsideGrid(x, y) {
+        return x >= 0 && x < this.cols && y >= 0 && y < this.rows;
     }
 
-    isPosValid(x, y) {
-        return x >= -2 && x < this.nW+2 && y >= -2 && y < this.nH+2;
+    /** True when (x, y) is anywhere in the extended grid (including the border). */
+    isPositionValid(x, y) {
+        return x >= -2 && x < this.cols + 2 && y >= -2 && y < this.rows + 2;
     }
 
-    // get index of given cell in the grid
-    index(x, y) {
-        return this.isPosValid(x, y) ? (this.nWx)*(y+2) + x+2 : -1;
+    /** Convert grid coordinates to a flat array index (-1 if out of bounds). */
+    cellIndex(x, y) {
+        return this.isPositionValid(x, y) ? this.stride * (y + 2) + (x + 2) : -1;
     }
 
-    // convert index of a cell to appropriate position (coordinates) in the grid
-    pos(i) {
-        return [i % this.nWx - 2, Math.floor(i / this.nWx)-2];
+    /** Convert a flat array index back to [x, y] grid coordinates. */
+    cellPos(i) {
+        return [i % this.stride - 2, Math.floor(i / this.stride) - 2];
     }
 
-    posMap(arr) {
-        var _this = this;
-        return arr.map(function(v) { return _this.pos(v) });
+    /** Map an array of cell indices to their [x, y] positions. */
+    indicesToPositions(indices) {
+        return indices.map(i => this.cellPos(i));
     }
 
-    value(x, y) {
-        var i = this.index(x,y);
-        return i >= 0? this.aCells[i] : 0;
+    /** Return the bitmask value of the cell at (x, y), or 0 if out of bounds. */
+    cellValue(x, y) {
+        const i = this.cellIndex(x, y);
+        return i >= 0 ? this.cells[i] : 0;
     }
 
-    set(x, y, v) {
-        var i = this.index(x,y);
-        if (i >= 0) this.aCells[i] = v;
+    /** Set the cell at (x, y) to an exact value. Returns its index. */
+    setCell(x, y, v) {
+        const i = this.cellIndex(x, y);
+        if (i >= 0) this.cells[i] = v;
         return i;
     }
 
-    setOn(x, y, v) {
-        var i = this.index(x,y);
-        if (i >= 0) this.aCells[i] |= v;
+    /** OR the given flag bits into the cell at (x, y). Returns its index. */
+    setCellFlag(x, y, flag) {
+        const i = this.cellIndex(x, y);
+        if (i >= 0) this.cells[i] |= flag;
         return i;
     }
 
-    setOff(x, y, v) {
-        var i = this.index(x,y);
-        if (i >= 0) this.aCells[i] &= ~v;
+    /** Clear (AND-NOT) the given flag bits from the cell at (x, y). */
+    clearCellFlag(x, y, flag) {
+        const i = this.cellIndex(x, y);
+        if (i >= 0) this.cells[i] &= ~flag;
         return i;
     }
 
-    placeCursor() {
-        return [Math.floor(this.nW/2), -2];
+    // ── Placement helpers ────────────────────────────────────────────────────
+
+    /** Starting position for the cursor (top edge, centred horizontally). */
+    getInitialCursorPos() {
+        return [Math.floor(this.cols / 2), -2];
     }
 
-    placeBalls(n) {
-        var a = [], ret = [];
-        for (var i = 0; i < n; i++) {
-            var k;
-            do k = Math.floor(Math.random() * this.nW * this.nH);
-            while (a.indexOf(k) >= 0);
-            a.push(k);
-            var x = k % this.nW, y = Math.floor(k / this.nW);
-            ret.push([x, y]);
+    /** n random positions inside the playfield for ball enemies. */
+    getRandomBallPositions(n) {
+        const used = [], result = [];
+        for (let i = 0; i < n; i++) {
+            let k;
+            do { k = Math.floor(Math.random() * this.cols * this.rows); }
+            while (used.includes(k));
+            used.push(k);
+            result.push([k % this.cols, Math.floor(k / this.cols)]);
         }
-        return ret;
+        return result;
     }
 
-    placeWarders(n) {
-        var z;
-        var aPos = [
-            [Math.floor(this.nW/2), this.nH+1],
-            [-1, this.nH+1], [this.nW, this.nH+1], [-1, -2], [this.nW, -2],
-            [-1, z = Math.floor(this.nH/2)], [this.nW, z],
-            [z = Math.floor(this.nW/4), this.nH+1], [3*z, this.nH+1]
+    /**
+     * Starting positions for n warder enemies along the outer border.
+     * Positions are drawn from a fixed pool; the first pool entry depends on n.
+     */
+    getWarderStartPositions(n) {
+        const mid = Math.floor(this.cols / 2);
+        const q   = Math.floor(this.cols / 4);
+        const pool = [
+            [mid, this.rows + 1],
+            [-1,  this.rows + 1], [this.cols,     this.rows + 1],
+            [-1,  -2],            [this.cols,     -2],
+            [-1,  Math.floor(this.rows / 2)], [this.cols, Math.floor(this.rows / 2)],
+            [q,   this.rows + 1], [3 * q, this.rows + 1],
         ];
-        var i0 = (n+ 1)% 2;
-        return aPos.slice(i0, Math.min(n+ i0, 9));
+        const offset = (n + 1) % 2;
+        return pool.slice(offset, Math.min(n + offset, 9));
     }
 
-    placeSpawned() {
-        if (window.ls.nWarders >= 9) return false;
-        function dist(pos1, pos2) {
-            return Math.pow(pos1[0]- pos2[0], 2) + Math.pow(pos1[1]- pos2[1], 2);
+    /**
+     * Find a safe spawn position for an extra warder.
+     * Returns false if the warder cap (9) has already been reached.
+     */
+    getSpawnPosition() {
+        if (game.level.warderCount >= MAX_WARDERS) return false;
+
+        function squaredDist(p1, p2) {
+            return (p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2;
         }
-        function find(pos0) {
-            var n = window.ls.nWarders;
-            for (var l = 0; l < x0; l++) {
-                for (var dx = -1; dx <= 1; dx+= 2) {
-                    var p = [pos0[0]+ l* dx, pos0[1]];
-                    for (var i = 0; i < n && dist(window.ls.aWarders[i].pos(), p) >= 4; i++) ;
-                    if (i >= n) return p;
+
+        const halfCols = Math.floor(this.cols / 2);
+
+        /** Walk left/right from pos0 until a position far enough from all warders. */
+        const findClearPos = (pos0) => {
+            const n = game.level.warderCount;
+            for (let l = 0; l < halfCols; l++) {
+                for (const dx of [-1, 1]) {
+                    const candidate = [pos0[0] + l * dx, pos0[1]];
+                    let i = 0;
+                    while (i < n && squaredDist(game.level.warders[i].pos(), candidate) >= 4) i++;
+                    if (i >= n) return candidate;
                 }
             }
             return pos0;
-        }
-        var x0 = Math.floor(this.nW/2);
-        var aPos = [[x0, this.nH+1], [x0, -2]];
-        var posCr = window.cursor.pos();
-        var posSt = dist(aPos[0], posCr) > dist(aPos[1], posCr)? aPos[0] : aPos[1];
-        var ret = find(posSt);
-        return ret;
+        };
+
+        const candidatePositions = [
+            [halfCols, this.rows + 1],
+            [halfCols, -2],
+        ];
+        const cursorPos = game.cursor.pos();
+        const start = squaredDist(candidatePositions[0], cursorPos) >
+                      squaredDist(candidatePositions[1], cursorPos)
+            ? candidatePositions[0] : candidatePositions[1];
+
+        return findClearPos(start);
     }
 
-    applyRelDirs(x, y, dir, aDeltas) {
-        var ret = [];
-        for (var n = aDeltas.length, i = 0; i < n; i++) {
-            var d = (dir + aDeltas[i] + 360) % 360;
-            var vec = window.var_dirset.get(d), xt, yt;
-            ret.push([xt = x + vec[0], yt = y + vec[1], d, this.value(xt, yt)]);
-        }
-        return ret;
+    // ── Trail management ─────────────────────────────────────────────────────
+
+    /**
+     * Compute the neighbouring cells in directions relative to `dir`.
+     * @param {number[]} angleOffsets - Offsets added to `dir` to derive each neighbour's angle.
+     * @returns {Array} Each entry is [nx, ny, angle, cellValue].
+     */
+    getAdjacentCells(x, y, dir, angleOffsets) {
+        return angleOffsets.map(offset => {
+            const angle    = (dir + offset + 360) % 360;
+            const [vx, vy] = dirs.get(angle);
+            const nx = x + vx, ny = y + vy;
+            return [nx, ny, angle, this.cellValue(nx, ny)];
+        });
     }
 
-    add2Trail(x, y, dir) {
-        var i = this.setOn(x, y, window.CA_TRAIL);
-        console.log('add to trail', x, y, i);
+    /** Mark cell (x, y) as part of the trail and update trail bookkeeping. */
+    addToTrail(x, y, dir) {
+        const i = this.setCellFlag(x, y, CELL_TRAIL);
         if (i < 0) return;
-        var n = this.aTrail.length;
-        if (!n || dir !== this.dirTrail) {
-            var iNode = n? this.aTrail[n-1] : i;
-            if (!n || iNode != this.aTrailNodes[this.aTrailNodes.length-1])
-                this.aTrailNodes.push(iNode);
+
+        const n = this.trail.length;
+        if (!n || dir !== this.trailDirection) {
+            const nodeIndex = n ? this.trail[n - 1] : i;
+            if (!n || nodeIndex !== this.trailNodes[this.trailNodes.length - 1])
+                this.trailNodes.push(nodeIndex);
             if (!n) {
-                var aPos = this.applyRelDirs(x, y, dir, [180]);
-                this.cellPreTrail = this.index(aPos[0][0], aPos[0][1]);
+                // Record the cell just before the trail so we can detect if the
+                // cursor comes back to where it started (which would be a collision).
+                const before = this.getAdjacentCells(x, y, dir, [180]);
+                this.preTrailCellIndex = this.cellIndex(before[0][0], before[0][1]);
             }
         }
-        this.aTrail.push(i);
-        this.dirTrail = dir;
+
+        this.trail.push(i);
+        this.trailDirection = dir;
     }
 
-    lastTrailLine() {
-        var pos0 = this.pos(this.aTrailNodes[this.aTrailNodes.length-1]),
-            pos = this.pos(this.aTrail[this.aTrail.length-1]);
+    /**
+     * Return the bounding rectangle [x, y, w, h] of the last trail segment
+     * (from the second-to-last node to the current trail tip).
+     */
+    getLastTrailRect() {
+        const [x0, y0] = this.cellPos(this.trailNodes[this.trailNodes.length - 1]);
+        const [x1, y1] = this.cellPos(this.trail[this.trail.length - 1]);
         return [
-            Math.min(pos[0], pos0[0]), Math.min(pos[1], pos0[1]),
-            Math.abs(pos[0] - pos0[0])+1, Math.abs(pos[1] - pos0[1])+1
+            Math.min(x0, x1), Math.min(y0, y1),
+            Math.abs(x0 - x1) + 1, Math.abs(y0 - y1) + 1,
         ];
     }
 
-    clearTrail(clear_graphics = false) {
-        // Clear trail cells first. If clear_graphics is true this means
-        // tank mode or forced clearing: mark those cells as conquered
-        // (set CA_CLEAR) so enemies treat them as cleared.
-        for (var n = this.aTrail.length, i = 0; i < n; i++) {
-            var idx = this.aTrail[i];
-            // position before we change the cell state
-            var pos = this.pos(idx);
-            var prev = this.aCells[idx];
-            // remove trail flag
-            this.aCells[idx] &= ~window.CA_TRAIL;
-            if (clear_graphics) {
-                // if cell was not already marked clear, mark it and count it
-                if (!(prev & window.CA_CLEAR)) {
-                    this.aCells[idx] |= window.CA_CLEAR;
-                    this.nConquered++;
-                }
-                window.gs.clearCellArea(pos[0], pos[1], 1, 1);
-                console.log('clear trail cell', pos[0], pos[1]);
-            }
+    /**
+     * Return an array of [x, y, w, h] rects covering all trail segments.
+     */
+    getAllTrailRects() {
+        if (!this.trail.length) return [];
+        const rects = [];
+        const nodes = this.trailNodes;
+        const tip   = this.trail[this.trail.length - 1];
+        // Each segment: from nodes[i] to nodes[i+1], last segment: nodes[last] to tip.
+        for (let i = 0; i < nodes.length; i++) {
+            const [x0, y0] = this.cellPos(nodes[i]);
+            const endIdx   = i + 1 < nodes.length ? nodes[i + 1] : tip;
+            const [x1, y1] = this.cellPos(endIdx);
+            rects.push([
+                Math.min(x0, x1), Math.min(y0, y1),
+                Math.abs(x0 - x1) + 1, Math.abs(y0 - y1) + 1,
+            ]);
         }
-        // After all cells are cleared, reset trail state
-        this.aTrailRects = [];
-        this.aTrail = []; this.aTrailNodes = [];
+        return rects;
     }
 
-    getPreTrailCell() {
-        return this.cellPreTrail;
+    /**
+     * Clear all trail state.
+     * @param {boolean} clearGraphics - When true (tank mode) each trail cell is
+     *   also marked as conquered and erased on the canvas.
+     */
+    resetTrail(clearGraphics = false) {
+        for (let i = 0; i < this.trail.length; i++) {
+            const idx  = this.trail[i];
+            const prev = this.cells[idx];
+            this.cells[idx] &= ~CELL_TRAIL;
+
+            const [x, y] = this.cellPos(idx);
+            if (clearGraphics) {
+                if (!(prev & CELL_CLEARED)) {
+                    this.cells[idx] |= CELL_CLEARED;
+                    this.conqueredCount++;
+                }
+                game.state.clearCells(x, y);
+            } else {
+                // Always fill with default color to erase trail
+                game.state.fillCells(game.config.colorEmpty, x, y);
+            }
+        }
+        this.trailRects = [];
+        this.trail = [];
+        this.trailNodes = [];
     }
 
-    // wrapper of conquered regions detection
-    conquer(points=[]) {
-        var nTrail = this.aTrail.length;
-        if (!nTrail) return new Array(points.length).fill(false);
-        if (nTrail > 1)
-            this.aTrailNodes.push(this.aTrail[nTrail-1]);// add last point as node
-        var aConqRects = this._conquer() || this._buildTrailRects();
-        this.aTrail = []; this.aTrailNodes = [];
-        if (!aConqRects || !aConqRects.length) return new Array(points.length).fill(false);
+    /** Return the index of the cell just before the trail (used for collision detection). */
+    getPreTrailCellIndex() {
+        return this.preTrailCellIndex;
+    }
 
-        // Initialize result array for points
-        var pointsInside = new Array(points.length).fill(false);
+    /**
+     * Remove the last cell from the trail (cursor is retracing backward).
+     * Clears the CELL_TRAIL flag, repaints the cell, and updates trailNodes.
+     */
+    popTrailCell() {
+        if (!this.trail.length) return;
 
-        for (var n = aConqRects.length, i = 0; i < n; i++) {
-            var rect = aConqRects[i];
-            var x0 = rect[0], y0 = rect[1], w = rect[2], h = rect[3];
+        const removedIdx = this.trail.pop();
+        this.cells[removedIdx] &= ~CELL_TRAIL;
+        const [rx, ry] = this.cellPos(removedIdx);
+        game.state.fillCells(game.config.colorEmpty, rx, ry);
 
-            // Check each point against current rectangle
-            for (var p = 0; p < points.length; p++) {
-                if (!pointsInside[p]) { // Only check if not already inside
-                    var px = points[p][0], py = points[p][1];
-                    if (px >= x0 && px < x0 + w && py >= y0 && py < y0 + h) {
-                        pointsInside[p] = true;
-                    }
+        if (this.trail.length === 0) {
+            this.trailNodes = [];
+            this.trailDirection = 0;
+        } else {
+            // Pop last node if it now equals the new trail tip (was start-of-segment
+            // for the segment we just removed the last cell from).
+            if (this.trailNodes.length > 1 &&
+                this.trailNodes[this.trailNodes.length - 1] === this.trail[this.trail.length - 1]) {
+                this.trailNodes.pop();
+            }
+            // Recompute direction from last two remaining trail cells.
+            if (this.trail.length >= 2) {
+                const [x1, y1] = this.cellPos(this.trail[this.trail.length - 2]);
+                const [x2, y2] = this.cellPos(this.trail[this.trail.length - 1]);
+                this.trailDirection = dirs.find(x2 - x1, y2 - y1) || this.trailDirection;
+            }
+        }
+    }
+
+    // ── Conquest ─────────────────────────────────────────────────────────────
+
+    /**
+     * Attempt to conquer all regions enclosed by the current trail.
+     * @param {Array<[number,number]>} checkPoints - Grid coordinates to test for
+     *   containment in conquered rectangles.
+     * @returns {boolean[]} One entry per checkPoint: true if that point was inside
+     *   a conquered rectangle.
+     */
+    conquerRegions(checkPoints = []) {
+        const trailLen = this.trail.length;
+        if (!trailLen) {
+            this.lastConquerRectCount = 0;
+            return new Array(checkPoints.length).fill(false);
+        }
+
+        if (trailLen > 1) this.trailNodes.push(this.trail[trailLen - 1]);
+
+        const savedTrail = this.trail.slice();
+        const rects = this._findConquerRects();
+        this.trail      = [];
+        this.trailNodes = [];
+
+        if (!rects || !rects.length) {
+            this.lastConquerRectCount = 0;
+            // Still must strip CELL_TRAIL from all trail cells so they don't
+            // cause false collisions when the cursor revisits them.
+            for (const idx of savedTrail) {
+                this.cells[idx] &= ~CELL_TRAIL;
+                if (!(this.cells[idx] & CELL_CLEARED)) {
+                    this.cells[idx] |= CELL_CLEARED;
+                    this.conqueredCount++;
+                }
+                const [tx, ty] = this.cellPos(idx);
+                game.state.clearCells(tx, ty, 1, 1);
+            }
+            return new Array(checkPoints.length).fill(false);
+        }
+
+        const pointInside = new Array(checkPoints.length).fill(false);
+    this.lastConquerRectCount = rects.length;
+
+        for (const rect of rects) {
+            const [rx, ry, rw, rh] = rect;
+
+            for (let p = 0; p < checkPoints.length; p++) {
+                if (!pointInside[p]) {
+                    const [px, py] = checkPoints[p];
+                    if (px >= rx && px < rx + rw && py >= ry && py < ry + rh)
+                        pointInside[p] = true;
                 }
             }
 
-            for (var x = 0; x < w; x++) {
-                for (var y = 0; y < h; y++) {
-                    if (this.value(x + x0, y + y0, window.CA_CLEAR) & window.CA_CLEAR) continue;
-                    this.set(x + x0, y + y0, window.CA_CLEAR);
-                    this.nConquered++;
+            for (let x = 0; x < rw; x++) {
+                for (let y = 0; y < rh; y++) {
+                    const cx = rx + x, cy = ry + y;
+                    if (this.cellValue(cx, cy) & CELL_CLEARED) continue;
+                    this.setCell(cx, cy, CELL_CLEARED);
+                    this.conqueredCount++;
                 }
             }
+            game.state.clearCells(...rect);
         }
-        for (i = 0; i < n; i++) {
-            window.gs.clearCellArea(...aConqRects[i]);
-            // this.allConqueredRect.push(aConqRects[i]);
+
+        // Strip CELL_TRAIL from trail cells and repaint them cleared.
+        for (const idx of savedTrail) {
+            if (this.cells[idx] & CELL_TRAIL) {
+                this.cells[idx] &= ~CELL_TRAIL;
+                if (!(this.cells[idx] & CELL_CLEARED)) {
+                    this.cells[idx] |= CELL_CLEARED;
+                    this.conqueredCount++;
+                }
+                const [tx, ty] = this.cellPos(idx);
+                game.state.clearCells(tx, ty, 1, 1);
+            }
         }
-        aConqRects = [];
-        return pointsInside;
+
+        return pointInside;
     }
-    getMinxMaxx(){
-        // Return minimum and maximum x (inclusive) for columns that contain
-        // at least one unconquered cell. If all cells are conquered return null.
-        //
-        // This scans columns x=0..nW-1 and checks rows y=0..nH-1 for any cell
-        // where the CA_CLEAR bit is NOT set (i.e. unconquered).
-        var minX = -1, maxX = -1;
-        for (var x = 0; x < this.nW; x++) {
-            var colHasUnconquered = false;
-            for (var y = 0; y < this.nH; y++) {
-                if (!(this.value(x, y) & window.CA_CLEAR)) { // unconquered
-                    colHasUnconquered = true;
+
+    /**
+     * Return [minX, maxX] of the column range that still has unconquered cells,
+     * or null if the whole field is cleared.
+     */
+    getActiveColumnRange() {
+        let minX = -1, maxX = -1;
+        for (let x = 0; x < this.cols; x++) {
+            for (let y = 0; y < this.rows; y++) {
+                if (!(this.cellValue(x, y) & CELL_CLEARED)) {
+                    if (minX === -1) minX = x;
+                    maxX = x;
                     break;
                 }
-            }
-            if (colHasUnconquered) {
-                if (minX === -1) minX = x;
-                maxX = x;
             }
         }
         return minX === -1 ? null : [minX, maxX];
     }
-    getConqueredRatio() {
-        return this.nConquered / (this.nW * this.nH) * 100;
+
+    /** Percentage of playfield cells that have been conquered. */
+    getConqueredPercent() {
+        return this.conqueredCount / (this.cols * this.rows) * 100;
     }
 
-    // conquered regions (polygons) detection:
-    _conquer() {
-        var nTrail = this.aTrail.length, nNodes = this.aTrailNodes.length;
-        var aOutlineset = []; // outlines (boundaries) of found regions
-        var delta;
-        var bClosedTrail = nNodes >= 4 &&
-            ((delta = Math.abs(this.aTrailNodes[0] - this.aTrailNodes[nNodes-1])) == 1 || delta == this.nWx);
-        if (bClosedTrail) { // if the cursor trail is self-closed
-            aOutlineset.push([this.aTrailNodes, 1]);
-        }
-        var bAddTrailRects = false;
-        var posPre = this.pos(this.cellPreTrail), posCr = window.cursor.pos();
-        var aDeltas = [-90, 90];
-        for (var side = 0; side < 2; side++) {
-            delta = aDeltas[side];
-            var iLastNode = 0;
-            var sum = 0, bNonTangent = false, bEndAtNode = false;
-            for (var l = 0; l < nTrail && sum < nTrail; l++) {
-                var cellStart = this.aTrail[l];
-                var pos = this.pos(cellStart);
-                var pos0 = l? this.pos(this.aTrail[l - 1]) : posPre;
-                var x = pos[0], y = pos[1];
-                var dir = (window.var_dirset.find(x - pos0[0], y - pos0[1]) + delta + 360) % 360;
-                var aDirs = bEndAtNode? [] : [dir];
-                if (this.aTrailNodes.indexOf(cellStart) >= 0) {
-                    var pos2 = l < nTrail - 1? this.pos(this.aTrail[l + 1]) : posCr;
-                    dir = (window.var_dirset.find(pos2[0] - x, pos2[1] - y) + delta + 360) % 360;
-                    if (dir != aDirs[0]) aDirs.push(dir);
-                }
-                if (this.aTrail[l] == this.aTrailNodes[iLastNode+1]) ++iLastNode;
-                var ret = 0;
-                for (var nDs = aDirs.length, j = 0; j < nDs && !ret; j++) {
-                    dir = aDirs[j];
-                    var vec = window.var_dirset.get(dir);
-                    var xt = x + vec[0], yt = y + vec[1];
-                    var v = this.value(xt, yt);
-                    if (v & window.CA_CLEAR || v & window.CA_TRAIL) continue;
-                    ret = this._findOutline(xt, yt, dir, l, iLastNode);
-                }
-                bEndAtNode = false;
-                if (!ret) continue;
-                var aNodes = ret[0], len = ret[1], lenTangent = ret[2];
-                if (ret.length > 3) {
-                    iLastNode = ret[3];
-                    l = ret[4];
-                    bEndAtNode = ret[5];
-                }
-                aOutlineset.push([aNodes, len]);
-                sum += lenTangent;
-                if (!lenTangent) bNonTangent = true;
+    // ── Internal conquest algorithms ─────────────────────────────────────────
+
+    /**
+     * Flood-fill conquest algorithm.
+     * Finds all connected components of uncleared, non-trail cells within the
+     * playfield.  Components that contain no ball enemy are returned as an array
+     * of [x, y, w, 1] row-segment rectangles ready for clearing.
+     * Components that contain a ball are left untouched.
+     * Always returns an array (never false).
+     */
+    _findConquerRects() {
+        const { cols, rows } = this;
+        const visited = new Uint8Array(this.cells.length);
+
+        // Handle any ball that is currently sitting on a trail cell.
+        // In sneaky (invincible) mode a ball can occupy a trail cell; if we leave
+        // it there the BFS never detects it (trail cells are pre-visited) and
+        // its adjacent region gets incorrectly cleared, causing a crash.
+        const trailSet = new Set(this.trail);
+        const balls = game.level.balls;
+        for (let b = balls.length - 1; b >= 0; b--) {
+            const ball = balls[b];
+            const bi = this.cellIndex(ball.x, ball.y);
+            if (!trailSet.has(bi)) continue;
+
+            if (game.sneakyConquer) {
+                // Conquest triggered during sneaky mode: leave the ball in place.
+                // Trail cells will be cleared and the ball continues normally.
+                continue;
+            } else {
+                balls.splice(b, 1);
             }
-            if (!sum && !bNonTangent && !bClosedTrail) return false;
-            if (sum < nTrail && !bClosedTrail) bAddTrailRects = true;
         }
-        if (!aOutlineset.length)
-            return false;
-        aOutlineset.sort(function (el1, el2) {
-            return el1[1] - el2[1];
-        });
-        var aRects = [], n = aOutlineset.length, bUnbroken = true;
-        for (var i = 0; i < (bUnbroken? n-1 : n); i++) {
-            ret = this._buildConquerRects(aOutlineset[i][0]);
-            if (ret)
-                aRects = aRects.concat(ret);
-            else
-                bUnbroken = false;
+
+        // Pre-mark cleared and trail cells so the flood fill won't enter them.
+        for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+                const i = this.cellIndex(x, y);
+                if (this.cells[i] & (CELL_CLEARED | CELL_TRAIL)) visited[i] = 1;
+            }
         }
-        if (!aRects.length)
-            return false;
-        return bAddTrailRects? aRects.concat(this._buildTrailRects()) : aRects;
+
+        // Collect qualifying regions: {size, cells[]}.
+        // Skip regions containing a ball enemy.
+        const qualifyingRegions = [];
+
+        for (let sy = 0; sy < rows; sy++) {
+            for (let sx = 0; sx < cols; sx++) {
+                const si = this.cellIndex(sx, sy);
+                if (visited[si]) continue;
+
+                const region = [];
+                const queue  = [[sx, sy]];
+                visited[si]  = 1;
+                let hasBall  = false;
+
+                for (let qi = 0; qi < queue.length; qi++) {
+                    const [cx, cy] = queue[qi];
+
+                    // Stop collecting cell coords once a ball is found;
+                    // still continue BFS to mark all reachable cells visited.
+                    if (!hasBall) {
+                        region.push(cx, cy);
+                        for (const ball of game.level.balls) {
+                            if (ball.x === cx && ball.y === cy) {
+                                hasBall = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+                        const nx = cx + dx, ny = cy + dy;
+                        if (nx < 0 || nx >= cols || ny < 0 || ny >= rows) continue;
+                        const ni = this.cellIndex(nx, ny);
+                        if (visited[ni]) continue;
+                        visited[ni] = 1;
+                        queue.push([nx, ny]);
+                    }
+                }
+
+                if (!hasBall) qualifyingRegions.push({ size: queue.length, region });
+            }
+        }
+
+        if (!qualifyingRegions.length) return [];
+
+        // In Xonix rules, when multiple qualifying regions exist clear only
+        // the smallest one (to minimise risk and match original game behaviour).
+        // If only one qualifies, clear it unconditionally.
+        const toConquer = qualifyingRegions.length === 1
+            ? qualifyingRegions
+            : [qualifyingRegions.reduce((a, b) => a.size <= b.size ? a : b)];
+
+        // Convert region cells to contiguous horizontal row-segment rects.
+        const rects = [];
+        for (const { region } of toConquer) {
+            const byRow = new Map();
+            for (let i = 0; i < region.length; i += 2) {
+                const rx = region[i], ry = region[i + 1];
+                if (!byRow.has(ry)) byRow.set(ry, []);
+                byRow.get(ry).push(rx);
+            }
+            for (const [ry, xs] of byRow) {
+                xs.sort((a, b) => a - b);
+                let start = xs[0], len = 1;
+                for (let i = 1; i <= xs.length; i++) {
+                    if (i < xs.length && xs[i] === start + len) {
+                        len++;
+                    } else {
+                        rects.push([start, ry, len, 1]);
+                        if (i < xs.length) { start = xs[i]; len = 1; }
+                    }
+                }
+            }
+        }
+
+        return rects;
     }
 
-    // find outline of conquered region (polygon)
-    //  from given cell position (x0, y0) and starting direction (dir)
-    //  as well as indices of starting cell and last node cell in the trail:
-    _findOutline(x0, y0, dir, iStartCell, iLastNode) {
-        function isClear(arr) {
-            return arr[3] & window.CA_CLEAR;
+    /** Build rectangles covering the current trail line segments. */
+    _buildTrailRectangles() {
+        if (this.trailNodes.length === 1) this.trailNodes.push(this.trailNodes[0]);
+        const rects = [];
+        for (let i = 0; i < this.trailNodes.length - 1; i++) {
+            const [x0, y0] = this.cellPos(this.trailNodes[i]);
+            const [x1, y1] = this.cellPos(this.trailNodes[i + 1]);
+            rects.push([
+                Math.min(x0, x1), Math.min(y0, y1),
+                Math.abs(x0 - x1) + 1, Math.abs(y0 - y1) + 1,
+            ]);
         }
-        var aNodes = [], aUniqNodes = [], aUsedDirs = [], aBackDirs = [];
-        var x = x0, y = y0,
-            lim = 6 * (this.nW + this.nH), n = 0, bClosed = false;
-        do {
-            bClosed = n && x == x0 && y == y0;
-            var cellCurr = this.index(x,y), iUniq = aUniqNodes.indexOf(cellCurr);
-            var aCurrUsed = iUniq >= 0? aUsedDirs[iUniq] : [];
-            var aCurrBack = iUniq >= 0? aBackDirs[iUniq] : [];
-            var aPosOpts = this.applyRelDirs(x,y, dir, [-90, 90, 0]);
-            var aTestDirs = [180+45, -45, 45, 180-45, -45, 45];
-            var aPassIdx = [], aPassWeight = [];
-            for (var i = 0; i < 3; i++) {
-                var d = aPosOpts[i][2];
-                if (aCurrUsed.indexOf(d) >= 0) continue;
-                if (isClear(aPosOpts[i])) continue;
-                var aTestOpts = this.applyRelDirs(x,y, dir, aTestDirs.slice(i*2,i*2+2));
-                var b1 = isClear(aTestOpts[0]), b2 = isClear(aTestOpts[1]);
-                var b = b1 || b2 || (i == 2? isClear(aPosOpts[0]) || isClear(aPosOpts[1]) : isClear(aPosOpts[2]));
-                if (!b) continue;
-                aPassIdx.push(i);
-                aPassWeight.push(
-                    (b1 && b2? 0 : b1 || b2? 1 : 2) + (aCurrBack.indexOf(d) >= 0? 3 : 0)
-                );
-            }
-            var nPass = aPassIdx.length;
-            var min = false, idx = false;
-            for (i = 0; i < nPass; i++) {
-                if (!i || aPassWeight[i] < min) {
-                    min = aPassWeight[i]; idx = aPassIdx[i];
-                }
-            }
-            var pos = nPass? aPosOpts[idx] : this.applyRelDirs(x,y, dir, [180])[0];
-            var dir0 = dir;
-            x = pos[0]; y = pos[1]; dir = pos[2];
-            if (pos[2] == dir0) continue;
-            nPass? aNodes.push(cellCurr) : aNodes.push(cellCurr, cellCurr);
-            dir0 = (dir0 + 180) % 360;
-            if (iUniq < 0) {
-                aUniqNodes.push(cellCurr);
-                aUsedDirs.push([dir]);
-                aBackDirs.push([dir0]);
-            }
-            else {
-                aUsedDirs[iUniq].push(dir);
-                aBackDirs[iUniq].push(dir0);
-            }
-        }
-        while (n++ < lim && !(this.value(x, y) & window.CA_TRAIL));
-        if (!(n < lim)) return false;
-        if (bClosed) {
-            aNodes.push(cellCurr);
-            if (aNodes[0] != (cellCurr = this.index(x0,y0))) aNodes.unshift(cellCurr);
-            var nNodes = aNodes.length;
-            if (nNodes % 2 && aNodes[0] == aNodes[nNodes-1]) aNodes.pop();
-            return [aNodes, n+1, 0];
-        }
-        var cellStart = this.aTrail[iStartCell], cellEnd = this.index(x,y);
-        aNodes.push(cellEnd);
-        var nTrail = this.aTrail.length;
-        var aTangentNodes = [cellStart];
-        for (var l = iStartCell+1; l < nTrail && this.aTrail[l] != cellEnd; l++) {
-            if (this.aTrail[l] == this.aTrailNodes[iLastNode+1])
-                aTangentNodes.push(this.aTrailNodes[++iLastNode]);
-        }
-        var bEndAtNode = this.aTrail[l] == this.aTrailNodes[iLastNode+1];
-        if (bEndAtNode) l++;
-        var lenTangent = l - iStartCell;
-        return [
-            aNodes.concat(aTangentNodes.reverse()), n+1+lenTangent, lenTangent,
-            iLastNode, l, bEndAtNode
-        ];
+        return rects;
     }
 
-    // break the cursor trail line into a set of rectangles:
-    _buildTrailRects() {
-        if (this.aTrailNodes.length == 1)
-            this.aTrailNodes.push(this.aTrailNodes[0]);
-        var aRects = [];
-        for (var n = this.aTrailNodes.length, i = 0; i < n-1; i++) {
-            var pos1 = this.pos(this.aTrailNodes[i]), pos2 = this.pos(this.aTrailNodes[i+1]);
-            var x0 = Math.min(pos1[0], pos2[0]), y0 = Math.min(pos1[1], pos2[1]);
-            var w = Math.max(pos1[0], pos2[0]) - x0 + 1, h = Math.max(pos1[1], pos2[1]) - y0 + 1;
-            var rect = [x0, y0, w, h];
-            aRects.push(rect);
-        }
-        return aRects;
-    }
-
-    // break region specified by its outline into a set of rectangles:
-    _buildConquerRects(aOutline) {
-        // checks if rectangle contains at least one ball (enemy):
-        function containBall(rect) {
-            var x1 = rect[0], x2 = x1+ rect[2] - 1;
-            var y1 = rect[1], y2 = y1+ rect[3] - 1;
-            for (var i = 0; i < window.ls.nBalls; i++) {
-                var o = window.ls.aBalls[i], x = o.x, y = o.y;
-                if (x >= x1 && x <= x2 && y >= y1 && y <= y2) return true;
+    /**
+     * @deprecated No longer used — kept for reference only.
+     * Decompose the polygon described by `outline` (array of cell indices) into
+     * axis-aligned rectangles.  Returns false if the polygon contains a ball.
+     */
+    _buildOutlineRectangles(outline) {
+        const containsBall = (rect) => {
+            const [x1, y1, w, h] = rect;
+            for (const ball of game.level.balls) {
+                if (ball.x >= x1 && ball.x < x1 + w &&
+                    ball.y >= y1 && ball.y < y1 + h) return true;
             }
             return false;
-        }
-        if (aOutline.length < 4) return false;
-        var aNodes = this.posMap(aOutline);
-        var n = aNodes.length;
-        if (n > 4 && n % 2 != 0) {
-            var b1 = aNodes[0][0] == aNodes[n-1][0], b2;
-            if (b1 ^ aNodes[0][1] == aNodes[n-1][1]) {
-                b2 = aNodes[n-2][0] == aNodes[n-1][0];
-                if (!(b2 ^ b1) && b2 ^ aNodes[n-2][1] == aNodes[n-1][1])
-                    aNodes.pop();
-                b2 = aNodes[0][0] == aNodes[1][0];
-                if (!(b2 ^ b1) && b2 ^ aNodes[0][1] == aNodes[1][1])
-                    aNodes.shift();
+        };
+
+        if (outline.length < 4) return false;
+        let pts = this.indicesToPositions(outline);
+        let n   = pts.length;
+
+        if (n > 4 && n % 2 !== 0) {
+            const b1 = pts[0][0] === pts[n - 1][0];
+            if (b1 ^ (pts[0][1] === pts[n - 1][1])) {
+                let b2 = pts[n - 2][0] === pts[n - 1][0];
+                if (!(b2 ^ b1) && (b2 ^ (pts[n - 2][1] === pts[n - 1][1]))) pts.pop();
+                b2 = pts[0][0] === pts[1][0];
+                if (!(b2 ^ b1) && (b2 ^ (pts[0][1] === pts[1][1]))) pts.shift();
             }
-            b1 = aNodes[0][0] == aNodes[1][0]; b2 = aNodes[1][0] == aNodes[2][0];
-            if (!(b1 ^ b2) && b1 ^ aNodes[0][1] == aNodes[1][1] && b2 ^ aNodes[1][1] == aNodes[2][1])
-                aNodes.shift();
+            n = pts.length;
+            const b1n = pts[0][0] === pts[1][0], b2n = pts[1][0] === pts[2][0];
+            if (!(b1n ^ b2n) && (b1n ^ (pts[0][1] === pts[1][1])) && (b2n ^ (pts[1][1] === pts[2][1])))
+                pts.shift();
         }
-        if (aNodes.length % 2 != 0) return false;
-        var aRects = [];
-        for (var l = 0; l < 10 && aNodes.length > 4; l++) {
-            n = aNodes.length;
-            var dim1 = 0, dim2 = 0, iBase = 0, iCo = 0;
-            var posB1, posB2, posT1, posT2;
-            for (var i = 0; i < n; i++) {
-                posB1 = aNodes[i]; posB2 = aNodes[(i+1)%n];
-                posT1 = aNodes[(i-1+n)%n]; posT2 = aNodes[(i+2)%n];
-                var dir = window.var_dirset.find(posT1[0]-posB1[0], posT1[1]-posB1[1]);
-                if (dir != window.var_dirset.find(posT2[0]-posB2[0], posT2[1]-posB2[1])) continue;
-                var dirTest = Math.floor((window.var_dirset.find(posB2[0]-posB1[0], posB2[1]-posB1[1])+ dir) / 2);
-                var vec = window.var_dirset.get(dirTest - dirTest% 45);
-                // pass x and y as separate arguments (was passing an array by mistake)
-                if (this.value(posB1[0] + vec[0], posB1[1] + vec[1]) & window.CA_CLEAR) continue;
-                var b = false, t, w, k;
-                if ((t = Math.abs(posB1[0]-posB2[0])) > dim1) {
-                    b = true; k = 0; w = t;
-                }
-                if ((t = Math.abs(posB1[1]-posB2[1])) > dim1) {
-                    b = true; k = 1; w = t;
-                }
-                if (!b) continue;
-                var k2 = (k+1)%2;
-                vec = window.var_dirset.get(dir);
-                var sgn = vec[k2];
-                var co2 = posB1[k2];
-                var left = Math.min(posB1[k], posB2[k]), right = Math.max(posB1[k], posB2[k]);
-                var min = Math.min(sgn* (posT1[k2]- co2), sgn* (posT2[k2]- co2));
-                for (var j = i% 2; j < n; j+= 2) {
-                    if (j == i) continue;
-                    var pos = aNodes[j], pos2 = aNodes[(j+1)%n], h;
-                    if (pos[k2] == pos2[k2] && (h = sgn*(pos[k2]- co2)) >= 0 && h < min &&
-                        pos[k] > left && pos[k] < right && pos2[k] > left && pos2[k] < right)
-                        break;
+
+        if (pts.length % 2 !== 0) return false;
+
+        const rects = [];
+        for (let iter = 0; iter < 10 && pts.length > 4; iter++) {
+            n = pts.length;
+            let bestDim1 = 0, bestDim2 = 0, iBase = 0, iCoord = 0;
+            let pB1, pB2, pT1, pT2;
+
+            for (let i = 0; i < n; i++) {
+                pB1 = pts[i]; pB2 = pts[(i + 1) % n];
+                pT1 = pts[(i - 1 + n) % n]; pT2 = pts[(i + 2) % n];
+
+                const outDir   = dirs.find(pT1[0] - pB1[0], pT1[1] - pB1[1]);
+                if (outDir !== dirs.find(pT2[0] - pB2[0], pT2[1] - pB2[1])) continue;
+
+                const edgeDir  = Math.floor((dirs.find(pB2[0] - pB1[0], pB2[1] - pB1[1]) + outDir) / 2);
+                const [vx, vy] = dirs.get(edgeDir - edgeDir % 45);
+                if (this.cellValue(pB1[0] + vx, pB1[1] + vy) & CELL_CLEARED) continue;
+
+                let found = false, k = -1, w = 0;
+                let t = Math.abs(pB1[0] - pB2[0]);
+                if (t > bestDim1) { found = true; k = 0; w = t; }
+                t = Math.abs(pB1[1] - pB2[1]);
+                if (t > bestDim1) { found = true; k = 1; w = t; }
+                if (!found) continue;
+
+                const k2  = (k + 1) % 2;
+                const [dvx, dvy] = dirs.get(outDir);
+                const sgn = k2 === 0 ? dvx : dvy;
+                const co2 = pB1[k2];
+                const left  = Math.min(pB1[k], pB2[k]);
+                const right = Math.max(pB1[k], pB2[k]);
+                const minH  = Math.min(sgn * (pT1[k2] - co2), sgn * (pT2[k2] - co2));
+
+                let j = i % 2;
+                for (; j < n; j += 2) {
+                    if (j === i) continue;
+                    const p = pts[j], p2 = pts[(j + 1) % n];
+                    const dh = sgn * (p[k2] - co2);
+                    if (p[k2] === p2[k2] && dh >= 0 && dh < minH &&
+                        p[k]  > left && p[k]  < right &&
+                        p2[k] > left && p2[k] < right) break;
                 }
                 if (j < n) continue;
-                dim1 = w; dim2 = sgn*min;
-                iBase = i; iCo = k;
+
+                bestDim1 = w;
+                bestDim2 = sgn * minH;
+                iBase    = i;
+                iCoord   = k;
             }
-            var iB2 = (iBase+1)%n, iT1 = (iBase-1+n)%n, iT2 = (iBase+2)%n;
-            posB1 = aNodes[iBase];
-            posB2 = aNodes[iB2];
-            posT1 = aNodes[iT1];
-            posT2 = aNodes[iT2];
-            var aDim = [0, 0], pos0 = [];
-            var iCo2 = (iCo+1)%2;
-            aDim[iCo] = dim1;
-            aDim[iCo2] = dim2;
-            pos0[iCo] = Math.min(posB1[iCo], posB2[iCo]);
-            pos0[iCo2] = Math.min(posB1[iCo2], posB2[iCo2]) + (aDim[iCo2] < 0? aDim[iCo2]: 0);
-            var rect = [pos0[0], pos0[1], Math.abs(aDim[0])+1, Math.abs(aDim[1])+1];
-            var bC = Math.abs(posT1[iCo2] - posB1[iCo2]) == Math.abs(dim2);
-            if (containBall(rect)) return false;
-            aRects.push(rect);
-            if (bC) {
-                posB2[iCo2] += dim2;
-                aNodes.splice(iBase,1);
-                aNodes.splice(iT1 < iBase? iT1 : iT1-1, 1);
-            }
-            else {
-                posB1[iCo2] += dim2;
-                aNodes.splice(iT2,1);
-                aNodes.splice(iB2 < iT2? iB2 : iB2-1, 1);
+
+            const iB2 = (iBase + 1) % n;
+            const iT1 = (iBase - 1 + n) % n;
+            const iT2 = (iBase + 2) % n;
+            pB1 = pts[iBase]; pB2 = pts[iB2];
+            pT1 = pts[iT1];   pT2 = pts[iT2];
+
+            const dim = [0, 0], pos0 = [0, 0];
+            const c2 = (iCoord + 1) % 2;
+            dim[iCoord] = bestDim1;
+            dim[c2]     = bestDim2;
+            pos0[iCoord] = Math.min(pB1[iCoord], pB2[iCoord]);
+            pos0[c2]     = Math.min(pB1[c2], pB2[c2]) + (dim[c2] < 0 ? dim[c2] : 0);
+
+            const rect = [pos0[0], pos0[1], Math.abs(dim[0]) + 1, Math.abs(dim[1]) + 1];
+            const shrinkC = Math.abs(pT1[c2] - pB1[c2]) === Math.abs(bestDim2);
+
+            if (containsBall(rect)) return false;
+            rects.push(rect);
+
+            if (shrinkC) {
+                pB2[c2] += bestDim2;
+                pts.splice(iBase, 1);
+                pts.splice(iT1 < iBase ? iT1 : iT1 - 1, 1);
+            } else {
+                pB1[c2] += bestDim2;
+                pts.splice(iT2, 1);
+                pts.splice(iB2 < iT2 ? iB2 : iB2 - 1, 1);
             }
         }
-        var aX = aNodes.map(function(v) {return v[0]});
-        var aY = aNodes.map(function(v) {return v[1]});
-        var x0 = Math.min.apply(null, aX);
-        var y0 = Math.min.apply(null, aY);
-        rect = [x0, y0, Math.max.apply(null, aX)-x0+1, Math.max.apply(null, aY)-y0+1];
-        if (containBall(rect)) return false;
-        aRects.push(rect);
-        return aRects;
+
+        const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+        const rx = Math.min(...xs), ry = Math.min(...ys);
+        const finalRect = [rx, ry, Math.max(...xs) - rx + 1, Math.max(...ys) - ry + 1];
+        if (containsBall(finalRect)) return false;
+        rects.push(finalRect);
+        return rects;
     }
 }
-

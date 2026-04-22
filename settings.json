@@ -1,0 +1,87 @@
+{
+    "game": {
+        "gridCols": 90,
+        "gridRows": 60,
+        "cellSize": 10,
+        "carry_over_speed": true,
+        "three_bonus": true,
+        "image_folder": "pics",
+        "initial_lives": 3,
+        "fullscreen_statusbar": true,
+        "sidebar": null,
+        "sidebar_width": "auto",
+        "sidebar_height": "auto",
+        "grid_autofit": false,
+        "title_fontsize": 50,
+        "sidebar_item_fontsize": 36,
+        "sidebar_value_fontsize": 24,
+        "banner_fontsize": 24,
+        "colorEmpty":        "#8899aa",
+        "colorBorder":       "#22aacc",
+        "colorBall":         "#ffffff",
+        "colorBallCenter":   "#000000",
+        "colorWarder":       "#000000",
+        "colorWarderCenter": "#f80000",
+        "colorCursor":       "#aa00aa",
+        "colorCursorCenter": "#00aaaa",
+        "colorCursorEffect": "#ffffff",
+        "colorTrail":        "#a800a8",
+        "tank_auto_stop":     true
+    },
+    "levels": [
+        {
+            "image": "pic (1).jpg",
+            "ballCount": 2,
+            "warderCount": 1,
+            "cursorSpeed": 20,
+            "enemySpeed": 20,
+            "targetAreaPercent": 70,
+            "bonusTypes": ["freez","tank", "speed", "slow", "sneaky", "killward", "life"]
+        },
+        {
+            "image": "pic (2).jpg",
+            "ballCount": 3,
+            "warderCount": 1,
+            "cursorSpeed": 15,
+            "enemySpeed": 15,
+            "targetAreaPercent": 70,
+            "bonusTypes": ["freez","tank", "speed", "slow", "sneaky", "killward"]
+        },
+        {
+            "image": "pic (3).jpg",
+            "ballCount": 4,
+            "warderCount": 2,
+            "cursorSpeed": 15,
+            "enemySpeed": 20,
+            "targetAreaPercent": 70,
+            "bonusTypes": ["freez","tank", "speed", "slow", "sneaky", "killward"]
+        },
+        {
+            "image": "pic (4).jpg",
+            "ballCount": 5,
+            "warderCount": 2,
+            "cursorSpeed": 20,
+            "enemySpeed": 20,
+            "targetAreaPercent": 70,
+            "bonusTypes": ["tank"]
+        },
+        {
+            "image": "pic (5).jpg",
+            "ballCount": 6,
+            "warderCount": 3,
+            "cursorSpeed": 20,
+            "enemySpeed": 20,
+            "targetAreaPercent": 70,
+            "bonusTypes": ["freez","tank", "speed", "slow", "sneaky", "killward"]
+        },
+        {
+            "image": "pic (6).jpg",
+            "ballCount": 7,
+            "warderCount": 3,
+            "cursorSpeed": 20,
+            "enemySpeed": 20,
+            "targetAreaPercent": 70,
+            "bonusTypes": ["freez","tank", "speed", "slow", "sneaky", "killward"]
+        }
+    ]
+}

@@ -1,214 +1,227 @@
-// The cursor implemented as a class
+﻿import { CELL_CLEARED, CELL_TRAIL, dirs, BONUS_WARNING_TIME } from './constants.js';
+import { game } from './gamestate.js';
+import { rebuildCursorSprite, _finishTankConquer } from './bonus.js';
+
+/** The player-controlled cursor that traces a trail across the playfield. */
 export class Cursor {
     constructor() {
-        this.x = 0; // current x coordinate
-        this.y = 0; // current y coordinate
-        this.x0 = 0; // previous x coordinate
-        this.y0 = 0; // previous y coordinate
-        this.dir = false; // current movement direction (angle in degrees)
-        this.onTrail = false; // current state (true - trial)
-        this.onTrail0 = false; // previous state
-        this._tankTrailConverted = false; // when in tank mode, whether existing trail cells were converted to cleared
+        this.x    = 0;      // current grid column
+        this.y    = 0;      // current grid row
+        this.prevX = 0;     // position at the start of the last render step
+        this.prevY = 0;
+        this.direction = false;   // movement angle in degrees, or false when stopped
+        this.isOnTrail  = false;  // true while the cursor is drawing a trail
+        this.wasOnTrail = false;  // isOnTrail value from the previous render step
+
     }
 
-    // reset the cursor position:
-    reset(x, y, bUnlock) {
-        var bPre = bUnlock && window.cellset.value(this.x, this.y) & window.CA_CLEAR;
-        this.x0 = bPre? this.x : x;
-        this.y0 = bPre? this.y : y;
+    /**
+     * Place the cursor at (x, y).
+     * @param {boolean} unlock - When true (after a collision recovery) keep the
+     *   previous position as prevX/prevY so the border cell gets redrawn.
+     */
+    reset(x, y, unlock = false) {
+        const stayAtPrev = unlock && (game.grid.cellValue(this.x, this.y) & CELL_CLEARED);
+        this.prevX = stayAtPrev ? this.x : x;
+        this.prevY = stayAtPrev ? this.y : y;
         this.x = x;
         this.y = y;
-        this.dir = this.onTrail = this.onTrail0 = false;
+        this.direction = this.isOnTrail = this.wasOnTrail = false;
     }
 
-    // update current position - move by given distance:
+    /** Return the current [x, y] position. */
+    pos() { return [this.x, this.y]; }
+
+    /** Return the current movement direction (angle or false). */
+    getDirection() { return this.direction; }
+
+    /**
+     * Set the movement direction.
+     * Reversing direction while on a trail is not allowed (it would cross
+     * the trail and cause an immediate collision).
+     */
+    setDirection(angle) {
+        if (angle === this.direction) return;
+        if (this.isOnTrail && this.direction !== false && angle !== false &&
+            Math.abs(angle - this.direction) === 180) return;
+        this.direction = angle;
+    }
+
+    /**
+     * Advance the cursor by `dist` cells in the current direction.
+     * Updates game.state.hasCollision / hasConquered as appropriate.
+     */
     update(dist) {
-        if (this.dir === false) return;
-        // local refs
-        var cs = window.cellset;
-        var gs = window.gs;
-        var ls = window.ls;
-        var tank = ls && ls.tankmode;
+        if (this.direction === false) return;
 
-        var x = this.x, y = this.y;
-        var vec = window.var_dirset.get(this.dir), vecX = vec[0], vecY = vec[1];
-        var bEnd = false;
+        const grid  = game.grid;
+        const state = game.state;
+        const level = game.level;
+        const tank  = level.tankMode;
 
-        // Ensure dist is a non-negative integer
+        let x = this.x, y = this.y;
+        const [vx, vy] = dirs.get(this.direction);
+        let finalized = false;
+
         dist = Math.max(0, Math.floor(dist));
 
+        for (let n = 0; n < dist; n++) {
+            const nx = x + vx, ny = y + vy;
 
-        for (var n = 0; n < dist; n++) {
-            var nx = x + vecX, ny = y + vecY;
-            if (cs.index(nx, ny) < 0) {
-                // out of valid grid — stop movement
-                this.dir = false; break;
+            if (grid.cellIndex(nx, ny) < 0) {
+                // Stepped outside the valid grid — stop.
+                this.direction = false;
+                break;
             }
 
-            // Inspect the next cell before committing the move
-            var nextVal = cs.value(nx, ny);
-            var nextCleared = Boolean(nextVal & window.CA_CLEAR);
-            var nextTrail = Boolean(nextVal & window.CA_TRAIL);
-
             if (tank) {
-                // Tank mode behavior:
-                // - If next cell is cleared: finalize/conquer current trail
-                // - If next cell is a trail cell (crossing): finalize/conquer
-                // - Otherwise (regular cell): elongate trail, and convert trail cells to cleared
-                if (nextCleared) {
-                    if (this.onTrail) {
-                        // finalize trail — let post-loop logic handle conquer
-                        bEnd = true;
-                        break;
+                const nextVal     = grid.cellValue(nx, ny);
+                const nextCellIdx = grid.cellIndex(nx, ny);
+                // End tank mode when stepping onto any already-cleared cell
+                const clearedBeforeTank = !!(nextVal & CELL_CLEARED);
+                if (clearedBeforeTank) {
+                    level.tankMode = false;
+                    game.bonusTimerActive = false;
+                    if (level.tankTimeout) {
+                        clearTimeout(level.tankTimeout);
+                        level.tankTimeout = null;
                     }
-                    // moving into an already cleared cell when not on a trail: just move
-                    x = nx; y = ny;
-                    // mark the new cell cleared (tank clears as it moves)
-                    if (!(cs.value(x, y) & window.CA_CLEAR)) {
-                        cs.set(x, y, window.CA_CLEAR);
-                        window.gs.clearCellArea(x, y, 1, 1);
-                        cs.nConquered++;
-                        // console.log('Tank mode conquered cell:', x, y);
-                    }
-                    continue;
+                    rebuildCursorSprite(false);
                 }
 
-                if (nextTrail) {
-                    // Crossing own path in tank mode -> finalize trail / conquer
-                    if (this.onTrail) {
-                        bEnd = true;
-                        break;
-                    }
-                    // If not currently on a trail, treat as normal move into a trail cell
-                    // but convert it immediately
-                    x = nx; y = ny;
-                    if (!(cs.value(x, y) & window.CA_CLEAR)) {
-                        cs.set(x, y, window.CA_CLEAR);
-                        window.gs.clearCellArea(x, y, 1, 1);
-                        cs.nConquered++;
-                    }
-                    continue;
-                }
-
-                // Regular cell in tank mode: elongate trail (so we keep track),
-                // but convert existing trail cells to cleared only once.
-                cs.add2Trail(nx, ny, this.dir);
-                this.onTrail = true;
-                // Convert previous trail cells to cleared on first tank move
-                if (!this._tankTrailConverted && cs.aTrail.length > 1) {
-                    for (var ti = 0; ti < cs.aTrail.length - 1; ti++) {
-                        var idx = cs.aTrail[ti];
-                        var prev = cs.aCells[idx];
-                        if (!(prev & window.CA_CLEAR)) {
-                            cs.aCells[idx] |= window.CA_CLEAR;
-                            cs.nConquered++;
-                            var ppos = cs.pos(idx);
-                            window.gs.clearCellArea(ppos[0], ppos[1], 1, 1);
-                        }
-                    }
-                    this._tankTrailConverted = true;
-                }
-                // Also mark the newly added cell as cleared immediately
-                var lastIdx = cs.aTrail[cs.aTrail.length - 1];
-                if (lastIdx !== undefined) {
-                    var prev2 = cs.aCells[lastIdx];
-                    if (!(prev2 & window.CA_CLEAR)) {
-                        cs.aCells[lastIdx] |= window.CA_CLEAR;
-                        cs.nConquered++;
-                        var ppos2 = cs.pos(lastIdx);
-                        window.gs.clearCellArea(ppos2[0], ppos2[1], 1, 1);
-                    }
-                }
-
-                // commit move
                 x = nx; y = ny;
+                const cellIdx = grid.cellIndex(x, y);
+                if (!(grid.cellValue(x, y) & CELL_CLEARED)) {
+                    grid.setCell(x, y, CELL_CLEARED);
+                    state.clearCells(x, y);
+                    grid.conqueredCount++;
+                    // Track as cleared during tank mode so re-visiting it won't end tank mode
+                    level.tankClearedCells?.add(cellIdx);
+                    // Add to saved trail, mirroring addToTrail node logic exactly:
+                    // node is the last-already-added cell (end of previous segment),
+                    // or the first cell itself when the trail is empty.
+                    if (level.saved_copy_trail) {
+                        const tn = level.saved_copy_trail.length;
+                        if (!tn || this.direction !== level.saved_copy_trail_direction) {
+                            const nodeIndex = tn ? level.saved_copy_trail[tn - 1] : cellIdx;
+                            if (!tn || nodeIndex !== level.saved_copy_trail_nodes[level.saved_copy_trail_nodes.length - 1])
+                                level.saved_copy_trail_nodes.push(nodeIndex);
+                            level.saved_copy_trail_direction = this.direction;
+                        }
+                        level.saved_copy_trail.push(cellIdx);
+                    }
+                }
+                if (level.tankMode === false) {
+                    this.direction = false;
+                    _finishTankConquer();
+                    break;
+                }
                 continue;
-            } // end tank handling
+            }
 
-            // Non-tank mode processing
+            // ── Normal (non-tank) movement ──────────────────────────────────
+
+            const nextVal     = grid.cellValue(nx, ny);
+            const nextCleared = !!(nextVal & CELL_CLEARED);
+            const nextTrail   = !!(nextVal & CELL_TRAIL);
+
             if (nextTrail) {
-                // Collision with own trail
-                gs.bCollision = true;
+                // Check if cursor is retracing its own trail backward.
+                const nextIdx = grid.cellIndex(nx, ny);
+                const trailLen = grid.trail.length;
+                if (this.isOnTrail && trailLen >= 2 && nextIdx === grid.trail[trailLen - 2]) {
+                    grid.popTrailCell();
+                    this.isOnTrail = grid.trail.length > 0;
+                    x = nx; y = ny;
+                    continue;
+                }
+                // Crossing own trail from a different direction → collision.
+                state.hasCollision = true;
                 break;
             }
 
             if (nextCleared) {
-                // Moving into cleared cell finalizes the trail
-                if (this.onTrail) {
-                    bEnd = true;
-                    break;
-                }
-                // Not on a trail: just move into cleared cell
+                if (this.isOnTrail) { x = nx; y = ny; finalized = true; break; }
                 x = nx; y = ny;
-                this.onTrail = false;
+                this.isOnTrail = false;
                 continue;
             }
 
-            // Regular non-tank cell: elongate trail
-            cs.add2Trail(nx, ny, this.dir);
-            this.onTrail = true;
+            // Unexplored cell: elongate the trail.
+            grid.addToTrail(nx, ny, this.direction);
+            this.isOnTrail = true;
             x = nx; y = ny;
         }
 
-        this.x = x; this.y = y;
-        if (!bEnd) return;
-        // If we've finalized a trail (either tank or normal), reset tank conversion flag
-        this._tankTrailConverted = false;
-        // If in tank mode we would have exited earlier; here we're normal mode
-        if ((cs.getPreTrailCell() == cs.index(x, y)))
-            gs.bCollision = true;
-        else {
-            this.dir = this.onTrail = false;
-            gs.bConquer = true;
-        }
-    }
+        this.x = x;
+        this.y = y;
 
-    // render current position:
-    render() {
-        if (this.x0 == this.x && this.y0 == this.y) {
-            if (window.gs.tLastFrame) return;
-        }
-        else {
-            if (this.onTrail0) {
-                var rect = window.cellset.lastTrailLine();
-                // window.gs.fillCellArea.apply(null, [window.gd.cfgMain.colorTrail].concat(rect));
-                window.gs.fillCellArea(window.gd.cfgMain.colorTrail,...rect);
-            }
-            else {
-                if (window.cellset.isPosIn(this.x0, this.y0)){
-                    window.gs.clearCellArea(this.x0, this.y0);
+        if (!finalized) return;
 
-                }else{
-                    var opacity = (window.ls && window.ls.ignoreCollisionBonus)? 0.5 :1
-                    window.gs.fillCellArea(window.gd.cfgMain.colorBorder, this.x0, this.y0, opacity);
+        if (grid.trail.length > 1 && grid.getPreTrailCellIndex() === grid.cellIndex(x, y))
+            state.hasCollision = true;
+        else if (grid.trail.length === 1 && grid.getPreTrailCellIndex() === grid.cellIndex(x, y)) {
+            // Single-cell trail returning to origin — treat as backtrack, not conquest.
+            grid.popTrailCell();
+            this.isOnTrail = false;
+        } else {
+            this.direction = this.isOnTrail = false;
 
+            // End sneaky (invincible) mode when the trail is completed.
+            if (game.level.isInvincible) {
+                game.sneakyConquer = true;
+                game.level.isInvincible = false;
+                if (game.level.sneakyTimeout != null) {
+                    clearTimeout(game.level.sneakyTimeout);
+                    game.activeEffectTimers = game.activeEffectTimers.filter(x => x !== game.level.sneakyTimeout);
+                    game.level.sneakyTimeout = null;
+                    game.bonusTimerActive = false;
+                    game.bonusTimerExpiresAt = 0;
                 }
-
+                rebuildCursorSprite(false);
             }
-            this.x0 = this.x; this.y0 = this.y;
+
+            state.hasConquered = true;
         }
-        this.onTrail0 = this.onTrail;
-        window.gs.drawCellImg(window.var_imgCursor, this.x, this.y);
     }
 
-    // get current position:
-    pos() {
-        return [this.x, this.y];
-    }
+    /** Redraw the cursor and erase its previous position. */
+    render() {
+        const state = game.state;
+        const cfg   = game.config;
+        const cs    = cfg.cellSize;
 
-    // get current movement direction:
-    getDir() {
-        return this.dir;
-    }
+        if (this.prevX === this.x && this.prevY === this.y) {
+            // Cursor hasn't moved — only redraw on the very first frame.
+            if (state.lastFrameTime) return;
+        } else {
+            if (this.wasOnTrail) {
+                // Erase the trail line segment that was just completed.
+                const trailOpacity = game.level.isInvincible ? 0.5 : 1;
+                const trailRect = game.grid.getLastTrailRect();
+                if (trailOpacity < 1) state.fillCells(cfg.colorEmpty, ...trailRect);
+                state.fillCells(cfg.colorTrail, ...trailRect, trailOpacity);
+            } else if (game.grid.isInsideGrid(this.prevX, this.prevY)) {
+                state.clearCells(this.prevX, this.prevY);
+            } else {
+                state.fillCells(cfg.colorBorder, this.prevX, this.prevY);
+            }
+            this.prevX = this.x;
+            this.prevY = this.y;
+        }
 
-    // set/change movement direction:
-    setDir(dir) {
-        if (dir === this.dir) return;
-        if (this.onTrail && this.dir !== false && dir !== false && Math.abs(dir - this.dir) == 180)
-            return;
-        this.dir = dir;
+        this.wasOnTrail = this.isOnTrail;
+
+        // Draw cursor directly on the canvas (avoids async Image loading issues).
+        // Use effect color while a timed bonus is active, but stop BONUS_WARNING_TIME
+        // before it expires so the cursor visually warns the player.
+        const withEffect = game.bonusTimerActive &&
+            (game.bonusTimerExpiresAt === 0 || Date.now() < game.bonusTimerExpiresAt - BONUS_WARNING_TIME);
+        const q   = Math.floor(cs / 4);
+        const ctx = state.mainCtx;
+        ctx.fillStyle = withEffect ? cfg.colorCursorEffect : cfg.colorCursor;
+        ctx.fillRect((this.x + 2) * cs, (this.y + 2) * cs, cs, cs);
+        ctx.fillStyle = cfg.colorCursorCenter;
+        ctx.fillRect((this.x + 2) * cs + q, (this.y + 2) * cs + q, cs - 2 * q, cs - 2 * q);
     }
 }
-
-
-

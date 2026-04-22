@@ -1,139 +1,275 @@
-<!DOCTYPE html>
-<html>
-    <head>
-        <meta charset="utf-8">
-        <meta http-equiv="X-UA-Compatible" content="IE=edge">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Country by Outline [Picxonix Demo]</title>
-        <!-- Bootstrap 3.1.1 CSS -->
-         <link rel="icon" href="data:;base64,=" type="image/x-icon">
-        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.1.1/css/bootstrap.min.css">
-        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.1.1/css/bootstrap-theme.min.css">
-        <style>
-div.my-container {
-    width: 660px;
-    margin: 0 auto 10px;
-}
-#graphics {
-    position: relative;
-    width: 600px;
-    margin: 0 auto;
-    display: block;
-}
-.my-center {
-    margin-left: auto;
-    margin-right: auto;
-}
-.my-panel {
-    margin-top: 10px;
-}
-.overlay {
-    position: absolute;
-    display: block;
-    opacity: 0.5;
-}
-#play:hover {
-    opacity: 1;
-}
-#statusbar {
-    box-sizing: border-box;
-    width: 600px;
-    padding: 4px 9px;
-    border: 1px solid black;
-    background-color: #f2f2f2;
-    font-family: monospace;
-    margin: 0 30px 10px 30px;
-    display: block;
-}
-#statusbar span {
-    margin-right: 10px;
-}
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>XONIX – Country by Outline</title>
+    <link rel="icon" href="data:;base64,=" type="image/x-icon">
 
+    <!-- Bootstrap 3 -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/css/bootstrap-theme.min.css">
 
-#statusbar > span > span {
-    font-weight: bold;
-}
+    <style>
+        /* ── Layout ─────────────────────────────────────────────── */
+        .page-wrap    { margin: 0 auto 10px; }
+        #graphics     { position: relative; margin: 0 auto; display: block; }
 
-/* Center table header and data cells vertically in the status table */
-#status-table td, #status-table th { vertical-align: middle; text-align: center; }
+        /* ── Status bar ─────────────────────────────────────────── */
+        #statusbar {
+            box-sizing: border-box;
+            padding: 4px 9px;
+            border: 1px solid #aaa;
+            background: #f2f2f2;
+            font-family: monospace;
+            display: block;
+            margin: 0 auto 0;
+        }
+        #status-table td,
+        #status-table th { vertical-align: middle; text-align: center; }
 
+        /* ── Game area wrapper (statusbar + canvas scaled together) */
+        #game-area { display: block; transform-origin: top left; }
 
-        </style>
-    </head>
-    <body>
+        /* ── Fullscreen mode ────────────────────────────────────── */
+        body.fs-mode {
+            margin: 0; padding: 0; overflow: hidden; background: #000;
+        }
+        body.fs-mode .page-wrap {
+            background: #000;
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+        }
 
-        <div class="my-container">
-            <div class="text-center">
-                <h3>XONIX javascript</h3>
-            </div>
+        /* ── Fullscreen vertical sidebar ─────────────────────────── */
+        #fs-sidebar {
+            display: none;
+            flex-direction: column;
+            box-sizing: border-box;
+            background: #1a1a1a;
+            font-family: monospace;
+            overflow: hidden;
+            padding: 0;
+            flex-shrink: 0;
+        }
+        .fs-sidebar-title {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex: 1 1 0;
+            min-height: 0;
+            min-width: 0;
+            overflow: hidden;
+            border-bottom: 1px solid #555;
+            background: #111;
+        }
+        .fs-sidebar-title span {
+            font-size: var(--fs-font-title, clamp(12px, 4vw, 36px));
+            color: #f0c040;
+            font-weight: bold;
+            letter-spacing: 4px;
+            text-transform: uppercase;
+        }
+        .fs-stat {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            flex: 1 1 0;
+            min-height: 0;
+            min-width: 0;
+            overflow: hidden;
+            border-bottom: 1px solid #333;
+            padding: 2px 0;
+        }
+        .fs-stat:last-child { border-bottom: none; }
+        .fs-stat-label { font-size: var(--fs-font-label, clamp(9px, 1.5vw, 14px)); color: #888; text-transform: uppercase; letter-spacing: 0.5px; line-height: 1.1; }
+        .fs-stat-value { font-size: var(--fs-font-value, clamp(10px, 2vw, 20px)); color: #fff; font-weight: bold; line-height: 1.1; }
+        .fs-sidebar-banner {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex: 1 1 0;
+            min-height: 0;
+            min-width: 0;
+            overflow: hidden;
+            border-top: 1px solid #555;
+            background: #111;
+            padding: 2px 4px;
+            text-align: center;
+        }
+        .fs-sidebar-banner span {
+            font-size: var(--fs-font-banner, clamp(9px, 1.5vw, 14px));
+            color: #7df;
+            font-weight: bold;
+            word-break: break-word;
+        }
+        #fs-banner-canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
 
-        <div class="text-center" style="margin-bottom: 10px;">
-            <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
-                <!-- Left column: banner -->
-                <div id="banner-div"
-                    style="flex: 1; max-width: 50%; min-height: 50px; display: flex; align-items: center; justify-content: center;">
-                    <div style="background-color: lightblue; border: 1px solid #99ccff; border-radius: 6px; padding: 10px 20px; width: 240px; text-align: center;">
-                        <span id="banner" style="font-size: 18px; color: #333;">START TO PLAY</span>
-                    </div>
-                </div>
+        /* ── Fullscreen top bar (portrait: game taller than screen) ── */
+        #fs-sidebar.fs-sidebar-top {
+            flex-direction: row;
+            align-items: stretch;
+        }
+        #fs-sidebar.fs-sidebar-top .fs-sidebar-title {
+            border-right: 1px solid #555;
+            border-bottom: none;
+            flex: 0 0 auto;
+            padding: 0 8px;
+        }
+        #fs-sidebar.fs-sidebar-top .fs-sidebar-title span {
+            font-size: var(--fs-font-title, clamp(12px, 2vw, 22px));
+            letter-spacing: 2px;
+        }
+        #fs-sidebar.fs-sidebar-top .fs-stat {
+            border-right: 1px solid #333;
+            border-bottom: none;
+            flex: 1 1 0;
+        }
+        #fs-sidebar.fs-sidebar-top .fs-sidebar-banner {
+            border-left: 1px solid #555;
+            border-top: none;
+            flex: 1 1 0;
+        }
 
-                <!-- Right column: button container -->
-                <div id="button-container"
-                    style="flex: 1; max-width: 50%; min-height: 50px; display: flex; flex-direction: column; align-items: center; justify-content: center;">
-                    <button id="play-btn" class="btn btn-success btn-lg" style="width: 240px;">
-                        <span class="glyphicon glyphicon-play"></span> Play
-                    </button>
-                    <div id="game-status-text" style="margin-top: 5px; font-size: 14px; color: #666; display: none;">
-                        Game Running...
-                    </div>
-                </div>
-            </div>
+        /* ── Sidebar on right or bottom: rendered after the game canvas ── */
+        #fs-sidebar.fs-sidebar-right,
+        #fs-sidebar.fs-sidebar-bottom { order: 1; }
 
-            <div style="margin-top: 5px; font-size: 12px; color: #666;">
-                <kbd>Enter</kbd> Start/Next | <kbd>Q</kbd> Quit | <kbd>ESC</kbd> Pause
+        /* ── Controls row ───────────────────────────────────────── */
+        .controls-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        .banner-box {
+            flex: 1;
+            max-width: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .banner-inner {
+            border: 1px solid #99ccff;
+            border-radius: 6px;
+            padding: 0;
+            width: 240px;
+            height: 70px;
+            overflow: hidden;
+        }
+        #banner-canvas {
+            display: block;
+            width: 240px;
+            height: 70px;
+        }
+
+        .button-box {
+            flex: 1;
+            max-width: 50%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        #play-btn        { width: 240px; }
+        #game-status-text { margin-top: 5px; font-size: 14px; color: #666; display: none; }
+
+        .hint-row { margin-top: 5px; font-size: 12px; color: #666; text-align: center; }
+    </style>
+</head>
+<body>
+
+<div class="page-wrap">
+    <h3 class="text-center">XONIX javascript</h3>
+
+    <!-- Controls: banner + play button -->
+    <div class="controls-row">
+        <div class="banner-box">
+            <div class="banner-inner">
+                <canvas id="banner-canvas" width="240" height="70"></canvas>
             </div>
         </div>
-
-            <div id="statusbar" class="my-panel my-center" style="width:640px; margin-left: 50px auto;">   <!-- Single-row table for status: Level | Time | Progress | Score | Heart -->
-                    <table id="status-table" style="width:100%; border-collapse:collapse; text-align:center; table-layout:fixed;">
-                        <thead>
-                            <tr>
-                            <th style="width:14%">Level</th>
-                            <th style="width:14%">Time</th>
-                            <th style="width:20%">Progress</th>
-                            <th style="width:14%">Score</th>
-                            <th style="width:10%; color:red; font-size:18px;">❤</th>
-                            <th style="width:14%">Speed</th>
-                            <th style="width:14%">Enemy</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                            <td><span id="status-progress-current">0</span>/<span id="status-progress-total">0</span></td>
-                            <td><span id="status-time">00:00</span></td>
-                            <td><span id="status-points">0</span></td>
-                            <td><span id="status-score">10</span></td>
-                            <td><span id="status-life">3</span></td>
-                            <td><span id="status-speed">3</span></td>
-                            <td><span id="status-enemy">3</span></td>
-                            </tr>
-                        </tbody>
-                        </table>
-                </div>
-            <div id="graphics" class="my-center" style="width:600px; margin: 0 auto;">
-
-            </div>
+        <div class="button-box">
+            <button id="play-btn" class="btn btn-success btn-lg">
+                <span class="glyphicon glyphicon-play"></span> Play
+            </button>
+            <div id="game-status-text">Game Running…</div>
         </div>
+    </div>
 
+    <div class="hint-row">
+        <kbd>Enter</kbd> Start/Next &nbsp;
+        <kbd>Q</kbd> Quit &nbsp;
+        <kbd>ESC</kbd> Pause &nbsp;
+         <kbd>F11</kbd> Fullscreen
+    </div>
 
-        <!-- Bootstrap CSS -->
-        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/css/bootstrap.min.css">
-        <!-- jQuery -->
-        <script src="https://code.jquery.com/jquery-1.11.0.min.js"></script>
-        <!-- Underscore -->
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.13.6/underscore-min.js"></script>
-        <!-- Bootstrap JS -->
-        <script src="https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/js/bootstrap.min.js"></script>
-        <script type="module" src="./main.js"></script>
-    </body>
+    <!-- Fullscreen vertical sidebar (shown in fullscreen when fullscreen_statusbar:true) -->
+    <div id="fs-sidebar">
+        <div class="fs-sidebar-title"><span>XONIX</span></div>
+        <div class="fs-stat"><div class="fs-stat-label">Level</div><div id="fs-s-level" class="fs-stat-value">-</div></div>
+        <div class="fs-stat"><div class="fs-stat-label">Time</div><div id="fs-s-time" class="fs-stat-value">--:--</div></div>
+        <div class="fs-stat"><div class="fs-stat-label">Progress</div><div id="fs-s-points" class="fs-stat-value">-</div></div>
+        <div class="fs-stat"><div class="fs-stat-label">Score</div><div id="fs-s-score" class="fs-stat-value">-</div></div>
+        <div class="fs-stat"><div class="fs-stat-label" style="color:red;">&#10084;</div><div id="fs-s-life" class="fs-stat-value">-</div></div>
+        <div class="fs-stat"><div class="fs-stat-label">Speed</div><div id="fs-s-speed" class="fs-stat-value">-</div></div>
+        <div class="fs-stat"><div class="fs-stat-label">Enemy</div><div id="fs-s-enemy" class="fs-stat-value">-</div></div>
+        <div class="fs-sidebar-banner">
+            <canvas id="fs-banner-canvas" width="320" height="80"></canvas>
+            <span id="fs-s-banner" style="display:none;">READY</span>
+        </div>
+    </div>
+
+    <!-- Status bar + game canvas wrapped together for unified scaling -->
+    <div id="game-area">
+    <!-- Status bar -->
+    <div id="statusbar" class="my-panel">
+        <table id="status-table" style="width:100%; border-collapse:collapse; table-layout:fixed;">
+            <thead>
+                <tr>
+                    <th style="width:14%">Level</th>
+                    <th style="width:14%">Time</th>
+                    <th style="width:20%">Progress</th>
+                    <th style="width:14%">Score</th>
+                    <th style="width:10%; color:red; font-size:18px;">&#10084;</th>
+                    <th style="width:14%">Speed</th>
+                    <th style="width:14%">Enemy</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><span id="status-progress-current">-</span>/<span id="status-progress-total">-</span></td>
+                    <td><span id="status-time">--:--</span></td>
+                    <td><span id="status-points">-</span></td>
+                    <td><span id="status-score">-</span></td>
+                    <td><span id="status-life">-</span></td>
+                    <td><span id="status-speed">-</span></td>
+                    <td><span id="status-enemy">-</span></td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Game canvas area -->
+    <div id="graphics" class="my-center"></div>
+    </div><!-- /#game-area -->
+</div>
+
+<!-- jQuery -->
+<script src="https://code.jquery.com/jquery-1.11.0.min.js"></script>
+<!-- Bootstrap JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/js/bootstrap.min.js"></script>
+<!-- Game entry point -->
+<script type="module" src="./main.js"></script>
+
+</body>
 </html>
