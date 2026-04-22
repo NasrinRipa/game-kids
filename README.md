@@ -1,7 +1,7 @@
 PicXonix
 ===============
 
-PicXonix is a sort of framework for making [Xonix](https://en.wikipedia.org/wiki/Xonix) clones on JavaScript/Canvas. It features a picture (image) hidden behind the playing field, with added features like eating bonus like snake game. Original code borrowed from https://github.com/hindmost/picxonix
+PicXonix is a kind of framework for creating [Xonix] clones with JavaScript and Canvas. The game reveals a hidden picture as you play, with added features like collecting bonuses similar to Snake. Original code from [hindmost/picxonix](https://github.com/hindmost/picxonix)
 
 
 License
