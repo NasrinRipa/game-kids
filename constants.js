@@ -16,7 +16,7 @@ export const MAX_WARDERS        = 9;      // maximum warder enemies on the field
 // Bonus spawning
 export const MAX_BONUS_TRY                 = 5;     // max placement attempts before giving up
 export const BONUS_MARGIN                  = 5;     // min cell distance from grid edge for bonus spawn
-export const BONUS_SPAWN_CLEARED_THRESHOLD = 50;    // stop spawning new bonuses above this % cleared
+export const BONUS_SPAWN_CLEARED_THRESHOLD = 80;    // stop spawning new bonuses above this % cleared
 export const BONUS_WARNING_TIME            = 1000;  // ms before expiry when withEffect turns off
 
 // Direction map: clockwise angle in degrees → [dx, dy] movement vector

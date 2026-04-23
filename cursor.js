@@ -37,13 +37,11 @@ export class Cursor {
 
     /**
      * Set the movement direction.
-     * Reversing direction while on a trail is not allowed (it would cross
-     * the trail and cause an immediate collision).
+     * Direction changes are accepted immediately; collision rules are handled
+     * by update() against the live trail/grid state.
      */
     setDirection(angle) {
         if (angle === this.direction) return;
-        if (this.isOnTrail && this.direction !== false && angle !== false &&
-            Math.abs(angle - this.direction) === 180) return;
         this.direction = angle;
     }
 

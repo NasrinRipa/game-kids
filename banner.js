@@ -102,11 +102,11 @@ export class BannerController {
         return snap;
     }
 
-    _fadeCurrentToGoOn(done) {
+    _fadeCurrentToGoOn(done, durationMs = 700) {
         const mainSnap = this._captureSnapshot(this._mainCanvas);
         const fsSnap = this._captureSnapshot(this._fsCanvas);
 
-        this._animate(360, (p) => {
+        this._animate(durationMs, (p) => {
             const drawFaded = (ctx, canvas, snap) => {
                 ctx.fillStyle = '#001122';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -204,7 +204,11 @@ export class BannerController {
             this._activeTag = '';
             this._clockForceFinishMs = 0;
             if (shouldAutoFade && this._queue.length === 0) {
-                this._scheduleIdleFadeToGoOn();
+                this._enqueue({
+                    tag: 'auto-go-on',
+                    run: (nextDone) => this._fadeCurrentToGoOn(nextDone, 700),
+                });
+                return;
             }
             this._pumpQueue();
         };
@@ -648,7 +652,7 @@ export class BannerController {
             autoFadeGoOn: true,
             run: (done) => {
                 this._sidebar('OOPS');
-                this._animate(900, (p) => {
+                this._animate(1000, (p) => {
                     const shake = p < 0.55 ? Math.sin(p * Math.PI * 15) * 5 * (1 - p / 0.55) : 0;
                     const flashAlpha = p < 0.22 ? 1 - p / 0.22 : 0;
                     this._drawAll((ctx, w, h) => {
@@ -669,6 +673,56 @@ export class BannerController {
                         ctx.textBaseline = 'middle';
                         ctx.fillText('OOPS!', 0, 0);
                         ctx.restore();
+
+                        // Broken-heart companion animation for OOPS.
+                        const heartBase = Math.min(w, h) * 0.14;
+                        const heartScale = p < 0.35
+                            ? 0.3 + (p / 0.35) * 0.95
+                            : 1.25 - Math.min((p - 0.35) / 0.65, 1) * 0.35;
+                        const crack = Math.max(0, Math.min((p - 0.28) / 0.5, 1));
+                        const split = heartBase * 0.09 * crack;
+                        const hx = w / 2;
+                        const hy = h * 0.74;
+
+                        const drawHalf = (dir) => {
+                            ctx.save();
+                            ctx.translate(hx + dir * split, hy);
+                            ctx.scale(heartScale, heartScale);
+                            ctx.beginPath();
+                            if (dir < 0) {
+                                ctx.rect(-heartBase * 1.2, -heartBase * 1.2, heartBase * 1.2, heartBase * 2.2);
+                            } else {
+                                ctx.rect(0, -heartBase * 1.2, heartBase * 1.2, heartBase * 2.2);
+                            }
+                            ctx.clip();
+
+                            ctx.beginPath();
+                            ctx.moveTo(0, heartBase * 0.95);
+                            ctx.bezierCurveTo(-heartBase * 1.0, heartBase * 0.25, -heartBase * 1.05, -heartBase * 0.6, 0, -heartBase * 0.08);
+                            ctx.bezierCurveTo(heartBase * 1.05, -heartBase * 0.6, heartBase * 1.0, heartBase * 0.25, 0, heartBase * 0.95);
+                            ctx.closePath();
+                            ctx.fillStyle = '#ff3b64';
+                            ctx.fill();
+                            ctx.restore();
+                        };
+
+                        drawHalf(-1);
+                        drawHalf(1);
+
+                        if (crack > 0) {
+                            ctx.save();
+                            ctx.translate(hx, hy);
+                            ctx.scale(heartScale, heartScale);
+                            ctx.strokeStyle = '#ffd9e0';
+                            ctx.lineWidth = Math.max(1.2, heartBase * 0.06);
+                            ctx.beginPath();
+                            ctx.moveTo(0, -heartBase * 0.2);
+                            ctx.lineTo(-heartBase * 0.16, heartBase * 0.1);
+                            ctx.lineTo(heartBase * 0.08, heartBase * 0.36);
+                            ctx.lineTo(-heartBase * 0.12, heartBase * 0.62);
+                            ctx.stroke();
+                            ctx.restore();
+                        }
                     });
                 }, done);
             },

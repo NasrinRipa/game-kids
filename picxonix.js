@@ -147,9 +147,14 @@ export function setCursorDirectionToward(canvasPos) {
             newDir = (d1 % 180 === 0) ^ (dc < 0) ? d1 : d2;
         }
     } else {
-        const delta = (curDir % 180) ? xc - cx : yc - cy;
-        if (!delta) return;
-        newDir = (delta > 0 ? 0 : 180) + (curDir % 180 ? 0 : 90);
+        const dx = xc - cx;
+        const dy = yc - cy;
+        if (!dx && !dy) return;
+        if (Math.abs(dx) >= Math.abs(dy)) {
+            newDir = dx >= 0 ? 0 : 180;
+        } else {
+            newDir = dy >= 0 ? 90 : 270;
+        }
     }
 
     game.cursor.setDirection(newDir);
@@ -526,7 +531,19 @@ function _handleFault() {
     game.state.lives--;
 
     // Fault cancels any currently active timed bonus effect immediately.
-    _deactivateActiveTimedBonus();
+    _deactivateActiveTimedBonus({ resetPersistentSlowdown: false });
+
+    const loseSpeedOnDeath = !!game.settingsData?.speed_lost_on_death;
+    if (loseSpeedOnDeath) {
+        const carryOver = !!game.settingsData?.carry_over_speed;
+        const defaultLevelIdx = carryOver ? 1 : game.state.levelIndex;
+        const defaultLevel = game.levelsData?.[Math.max(0, defaultLevelIdx - 1)] || null;
+
+        game.state.bonusSpeed = 0;
+        game.level.enemySlowdown = 0;
+        if (defaultLevel?.cursorSpeed != null) game.state.cursorSpeed = defaultLevel.cursorSpeed;
+        if (defaultLevel?.enemySpeed != null) game.level.enemySpeed = defaultLevel.enemySpeed;
+    }
 
     game.ui.updateStatus('update');
     if (game.state.lives > 0) {
@@ -574,7 +591,7 @@ function _handleConquer(clearedPercent, targetPercent) {
     endLevel(true);
 }
 
-function _deactivateActiveTimedBonus() {
+function _deactivateActiveTimedBonus({ resetPersistentSlowdown = true } = {}) {
     for (const t of game.activeEffectTimers) clearTimeout(t);
     game.activeEffectTimers = [];
 
@@ -586,7 +603,7 @@ function _deactivateActiveTimedBonus() {
 
     if (game.level) {
         game.level.isInvincible = false;
-        game.level.enemySlowdown = 0;
+        if (resetPersistentSlowdown) game.level.enemySlowdown = 0;
         if (game.level.tankMode) {
             game.level.tankMode = false;
             game.level.tankTimeout = null;
