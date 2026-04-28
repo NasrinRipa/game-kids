@@ -436,37 +436,20 @@ export class Grid {
 
     /**
      * Flood-fill conquest algorithm.
-     * Finds all connected components of uncleared, non-trail cells within the
-     * playfield.  Components that contain no ball enemy are returned as an array
-     * of [x, y, w, 1] row-segment rectangles ready for clearing.
-     * Components that contain a ball are left untouched.
+     * 1. Pre-mark CLEARED + TRAIL cells as visited.
+     * 2. In normal mode, BFS from each ball to mark its reachable region as visited
+     *    (excluded from conquest). In tank/sneaky mode this step is skipped so every
+     *    unvisited region is conquered unconditionally.
+     * 3. All remaining unvisited components are conquered. Balls that end up on
+     *    cleared cells are handled by the isBallExiled mechanism in Enemy.update().
      * Always returns an array (never false).
      */
     _findConquerRects() {
         const { cols, rows } = this;
         const visited = new Uint8Array(this.cells.length);
-
-        // Handle any ball that is currently sitting on a trail cell.
-        // In sneaky (invincible) mode a ball can occupy a trail cell; if we leave
-        // it there the BFS never detects it (trail cells are pre-visited) and
-        // its adjacent region gets incorrectly cleared, causing a crash.
-        const trailSet = new Set(this.trail);
         const balls = game.level.balls;
-        for (let b = balls.length - 1; b >= 0; b--) {
-            const ball = balls[b];
-            const bi = this.cellIndex(ball.x, ball.y);
-            if (!trailSet.has(bi)) continue;
 
-            if (game.sneakyConquer) {
-                // Conquest triggered during sneaky mode: leave the ball in place.
-                // Trail cells will be cleared and the ball continues normally.
-                continue;
-            } else {
-                balls.splice(b, 1);
-            }
-        }
-
-        // Pre-mark cleared and trail cells so the flood fill won't enter them.
+        // Step 1: Pre-mark cleared and trail cells as visited.
         for (let y = 0; y < rows; y++) {
             for (let x = 0; x < cols; x++) {
                 const i = this.cellIndex(x, y);
@@ -474,10 +457,30 @@ export class Grid {
             }
         }
 
-        // Collect qualifying regions: {size, cells[]}.
-        // Skip regions containing a ball enemy.
-        const qualifyingRegions = [];
+        // Step 2: BFS from each ball to mark its reachable region visited (those
+        // regions won't be conquered). Tank mode skips this for immediate full conquer.
+        if (!game.level.tankMode) {
+            for (const ball of balls) {
+                const bi = this.cellIndex(ball.x, ball.y);
+                if (bi < 0 || visited[bi]) continue;
+                visited[bi] = 1;
+                const queue = [[ball.x, ball.y]];
+                for (let qi = 0; qi < queue.length; qi++) {
+                    const [cx, cy] = queue[qi];
+                    for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+                        const nx = cx + dx, ny = cy + dy;
+                        if (nx < 0 || nx >= cols || ny < 0 || ny >= rows) continue;
+                        const ni = this.cellIndex(nx, ny);
+                        if (visited[ni]) continue;
+                        visited[ni] = 1;
+                        queue.push([nx, ny]);
+                    }
+                }
+            }
+        }
 
+        // Step 3: All remaining unvisited components — conquer all of them.
+        const rects = [];
         for (let sy = 0; sy < rows; sy++) {
             for (let sx = 0; sx < cols; sx++) {
                 const si = this.cellIndex(sx, sy);
@@ -486,23 +489,10 @@ export class Grid {
                 const region = [];
                 const queue  = [[sx, sy]];
                 visited[si]  = 1;
-                let hasBall  = false;
 
                 for (let qi = 0; qi < queue.length; qi++) {
                     const [cx, cy] = queue[qi];
-
-                    // Stop collecting cell coords once a ball is found;
-                    // still continue BFS to mark all reachable cells visited.
-                    if (!hasBall) {
-                        region.push(cx, cy);
-                        for (const ball of game.level.balls) {
-                            if (ball.x === cx && ball.y === cy) {
-                                hasBall = true;
-                                break;
-                            }
-                        }
-                    }
-
+                    region.push(cx, cy);
                     for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
                         const nx = cx + dx, ny = cy + dy;
                         if (nx < 0 || nx >= cols || ny < 0 || ny >= rows) continue;
@@ -513,37 +503,22 @@ export class Grid {
                     }
                 }
 
-                if (!hasBall) qualifyingRegions.push({ size: queue.length, region });
-            }
-        }
-
-        if (!qualifyingRegions.length) return [];
-
-        // In Xonix rules, when multiple qualifying regions exist clear only
-        // the smallest one (to minimise risk and match original game behaviour).
-        // If only one qualifies, clear it unconditionally.
-        const toConquer = qualifyingRegions.length === 1
-            ? qualifyingRegions
-            : [qualifyingRegions.reduce((a, b) => a.size <= b.size ? a : b)];
-
-        // Convert region cells to contiguous horizontal row-segment rects.
-        const rects = [];
-        for (const { region } of toConquer) {
-            const byRow = new Map();
-            for (let i = 0; i < region.length; i += 2) {
-                const rx = region[i], ry = region[i + 1];
-                if (!byRow.has(ry)) byRow.set(ry, []);
-                byRow.get(ry).push(rx);
-            }
-            for (const [ry, xs] of byRow) {
-                xs.sort((a, b) => a - b);
-                let start = xs[0], len = 1;
-                for (let i = 1; i <= xs.length; i++) {
-                    if (i < xs.length && xs[i] === start + len) {
-                        len++;
-                    } else {
-                        rects.push([start, ry, len, 1]);
-                        if (i < xs.length) { start = xs[i]; len = 1; }
+                const byRow = new Map();
+                for (let i = 0; i < region.length; i += 2) {
+                    const rx = region[i], ry = region[i + 1];
+                    if (!byRow.has(ry)) byRow.set(ry, []);
+                    byRow.get(ry).push(rx);
+                }
+                for (const [ry, xs] of byRow) {
+                    xs.sort((a, b) => a - b);
+                    let start = xs[0], len = 1;
+                    for (let i = 1; i <= xs.length; i++) {
+                        if (i < xs.length && xs[i] === start + len) {
+                            len++;
+                        } else {
+                            rects.push([start, ry, len, 1]);
+                            if (i < xs.length) { start = xs[i]; len = 1; }
+                        }
                     }
                 }
             }

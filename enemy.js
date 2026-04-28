@@ -121,6 +121,7 @@ export class Enemy {
 
         const checkCursorAt = (ex, ey, dir) => {
             if (level.isInvincible) return;
+            if (level.tankMode && !this.isWarder) return;
             if (cursorIsTarget) {
                 const hit = ADJACENT_COLLISION
                     ? Math.abs(ex - cx) <= 1 && Math.abs(ey - cy) <= 1

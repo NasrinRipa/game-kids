@@ -27,6 +27,13 @@ export const game = {
     /** The DOM <div> that holds all game canvases. */
     wrapEl: null,
 
+    /** Debug overlay canvas + context used for paused grid marks. */
+    debugCtx: null,
+    debugCanvas: null,
+
+    /** True when paused debug marks should be visible. */
+    debugOverlayEnabled: false,
+
     /** Sub-pixel movement accumulators (carry the fractional part across frames). */
     cursorMoveAcc: 0,
     enemyMoveAcc:  0,
@@ -134,6 +141,8 @@ export class LevelConfig {
         this.ballCount         = 0;
         this.warderCount       = 1;
         this.targetAreaPercent = 80;   // % of field to clear to win the level
+        this.bonusSpawnMilestones = [10, 25, 45]; // % cleared at which bonuses can spawn
+        this.bonusSpawnMaxCleared = 80; // stop spawning bonuses at/above this cleared %
         this.enemySpeed        = 10;   // base enemy movement speed (cells/sec)
         this.enemySlowdown     = 0;    // speed reduction applied by bonuses
         this.isInvincible      = false; // true → enemy collisions are ignored

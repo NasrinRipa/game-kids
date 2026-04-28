@@ -23,7 +23,7 @@ import { GameConfig, GameState, LevelConfig, game } from './gamestate.js';
 import { Cursor }                        from './cursor.js';
 import { Grid }                          from './cellset.js';
 import { Enemy }                         from './enemy.js';
-import { dirs, COLLISION_TIMEOUT, LEVEL_CLEAR_DELAY, LEVEL_CLEAR_DURATION, BONUS_MARGIN, BONUS_SPAWN_CLEARED_THRESHOLD } from './constants.js';
+import { CELL_CLEARED, dirs, COLLISION_TIMEOUT, LEVEL_CLEAR_DELAY, LEVEL_CLEAR_DURATION, BONUS_MARGIN, BONUS_SPAWN_CLEARED_THRESHOLD } from './constants.js';
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -68,6 +68,7 @@ export function newGame() {
     game.state  = new GameState(game.config);
     game.state.lives = game.config.initialLives;
     game.loopFn = _gameLoop;
+    game.manualStepQueue = [];
 
     _initCanvasContainer();
 
@@ -134,26 +135,19 @@ export function setCursorDirectionToward(canvasPos) {
     if (!game.grid.isPositionValid(xc, yc)) return;
 
     const [cx, cy] = game.cursor.pos();
-    const curDir   = game.cursor.getDirection();
     let newDir     = false;
 
-    if (curDir === false) {
-        const dx = xc - cx, dy = yc - cy;
-        const dc = Math.abs(dx) - Math.abs(dy);
-        if (dc === 0) return;
+    const dx = xc - cx, dy = yc - cy;
+    const dc = Math.abs(dx) - Math.abs(dy);
+    if (!dx && !dy) return;
+    if (dc === 0) {
+        // Exactly diagonal: prefer horizontal vs vertical based on which axis is larger
+        newDir = Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? 0 : 180) : (dy >= 0 ? 90 : 270);
+    } else {
         newDir = dirs.find(dx, dy);
         if (newDir % 90 !== 0) {
             const d1 = newDir - 45, d2 = newDir + 45;
             newDir = (d1 % 180 === 0) ^ (dc < 0) ? d1 : d2;
-        }
-    } else {
-        const dx = xc - cx;
-        const dy = yc - cy;
-        if (!dx && !dy) return;
-        if (Math.abs(dx) >= Math.abs(dy)) {
-            newDir = dx >= 0 ? 0 : 180;
-        } else {
-            newDir = dy >= 0 ? 90 : 270;
         }
     }
 
@@ -194,6 +188,14 @@ export function flashEffect({ color = 'white', opacity = 1, duration = 400, repe
     doFlash();
 }
 
+/** Toggle paused debug marks (X=uncleared, O=cleared, +=enemy location). */
+export function setDebugOverlay(enabled) {
+    game.debugOverlayEnabled = !!enabled;
+    if (!game.debugCtx) return;
+    _clearDebugOverlay();
+    if (game.debugOverlayEnabled) _drawDebugOverlay();
+}
+
 // ── Canvas / level setup ───────────────────────────────────────────────────────
 
 function _initLevelState(levelIndex) {
@@ -207,6 +209,10 @@ function _initLevelState(levelIndex) {
         game.level.warderCount        = ld.warderCount        ?? game.level.warderCount;
         game.level.targetAreaPercent  = ld.targetAreaPercent  ?? game.level.targetAreaPercent;
         game.level.bonusTypes         = ld.bonusTypes         ?? ['tank'];
+        if (Array.isArray(ld.bonusSpawnMilestones))
+            game.level.bonusSpawnMilestones = ld.bonusSpawnMilestones;
+        if (ld.bonusSpawnMaxCleared != null)
+            game.level.bonusSpawnMaxCleared = ld.bonusSpawnMaxCleared;
 
         // Use game-wide carry_over_speed setting.
         const carryOver = game.settingsData?.carry_over_speed ?? false;
@@ -220,6 +226,7 @@ function _initLevelState(levelIndex) {
 
     game.cursorMoveAcc = 0;
     game.enemyMoveAcc  = 0;
+    game.manualStepQueue = [];
     game.grid   = game.grid   || new Grid();
     game.cursor = game.cursor || new Cursor();
     game.grid.reset();
@@ -236,9 +243,14 @@ function _initCanvasContainer() {
     const totalW = cfg.canvasWidth  + 4 * cs;
     const totalH = cfg.canvasHeight + 4 * cs;
 
+    // Narrow sidebar width – allocate real space so sidebars don't overlap the border.
+    const sbarW = game.settingsData?.narrow_sidebar_width ?? 8;
+    game.narrowSidebarWidth = sbarW;
+
     // Give the wrapper explicit dimensions so CSS zoom/transform scales correctly.
+    // Extra 2*sbarW reserves space for the narrow sidebars on each side.
     game.wrapEl.style.position = 'relative';
-    game.wrapEl.style.width    = totalW + 'px';
+    game.wrapEl.style.width    = (totalW + 2 * sbarW) + 'px';
     game.wrapEl.style.height   = totalH + 'px';
 
     // ── Background canvas (level image / revealed cells) ──────────────────────
@@ -246,7 +258,7 @@ function _initCanvasContainer() {
     game.state.bgCtx  = bgCanvas.getContext('2d');
     bgCanvas.width    = cfg.canvasWidth;
     bgCanvas.height   = cfg.canvasHeight;
-    bgCanvas.style.cssText = `position:absolute; left:${2 * cs}px; top:${2 * cs}px;`;
+    bgCanvas.style.cssText = `position:absolute; left:${2 * cs + sbarW}px; top:${2 * cs}px;`;
     game.state.bgCtx.fillStyle = cfg.colorTrail;
     game.state.bgCtx.fillRect(0, 0, cfg.canvasWidth, cfg.canvasHeight);
     game.wrapEl.appendChild(bgCanvas);
@@ -256,7 +268,7 @@ function _initCanvasContainer() {
     game.state.mainCtx  = mainCanvas.getContext('2d');
     mainCanvas.width    = cfg.canvasWidth  + 4 * cs;
     mainCanvas.height   = cfg.canvasHeight + 4 * cs;
-    mainCanvas.style.cssText = 'position:absolute; left:0; top:0;';
+    mainCanvas.style.cssText = `position:absolute; left:${sbarW}px; top:0;`;
     game.state.fillCanvas();
     game.state.mainCtx.fillStyle = cfg.colorEmpty;
     game.state.mainCtx.fillRect(2 * cs, 2 * cs, cfg.canvasWidth, cfg.canvasHeight);
@@ -267,7 +279,7 @@ function _initCanvasContainer() {
     flashEl.id    = 'flash-overlay';
     Object.assign(flashEl.style, {
         position:      'absolute',
-        left:          '0', top: '0',
+        left:          `${sbarW}px`, top: '0',
         width:         `${cfg.canvasWidth  + 4 * cs}px`,
         height:        `${cfg.canvasHeight + 4 * cs}px`,
         background:    'white',
@@ -277,6 +289,54 @@ function _initCanvasContainer() {
         transition:    'opacity 0.3s ease-in-out',
     });
     game.wrapEl.appendChild(flashEl);
+
+    // ── Debug overlay (paused diagnostics) ───────────────────────────────────
+    const debugCanvas = document.createElement('canvas');
+    debugCanvas.width = cfg.canvasWidth + 4 * cs;
+    debugCanvas.height = cfg.canvasHeight + 4 * cs;
+    debugCanvas.style.cssText = `position:absolute; left:${sbarW}px; top:0; pointer-events:none; z-index:10000;`;
+    game.debugCanvas = debugCanvas;
+    game.debugCtx = debugCanvas.getContext('2d');
+    game.wrapEl.appendChild(debugCanvas);
+
+    // ── Narrow sidebars (left = cleared area, right = warder timer) ────────────
+    // Positioned in the flanking space outside the main game canvas.
+    {
+        const s   = game.settingsData ?? {};
+        const showNarrow = s.narrow_sidebar_show ?? true;
+        const displayVal = showNarrow ? 'block' : 'none';
+
+        const leftCanvas = document.createElement('canvas');
+        leftCanvas.id = 'narrow-left-sidebar';
+        leftCanvas.width  = sbarW;
+        leftCanvas.height = totalH;
+        Object.assign(leftCanvas.style, {
+            position: 'absolute',
+            left:     '0',
+            top:      '0',
+            zIndex:   '500',
+            display:  displayVal,
+            pointerEvents: 'none',
+        });
+        game.wrapEl.appendChild(leftCanvas);
+
+        const rightCanvas = document.createElement('canvas');
+        rightCanvas.id = 'narrow-right-sidebar';
+        rightCanvas.width  = sbarW;
+        rightCanvas.height = totalH;
+        Object.assign(rightCanvas.style, {
+            position: 'absolute',
+            left:     `${totalW + sbarW}px`,
+            top:      '0',
+            zIndex:   '500',
+            display:  displayVal,
+            pointerEvents: 'none',
+        });
+        game.wrapEl.appendChild(rightCanvas);
+
+        game.narrowLeftCanvas  = leftCanvas;
+        game.narrowRightCanvas = rightCanvas;
+    }
 
     // ── Sprite images ─────────────────────────────────────────────────────────
     _buildSprites();
@@ -343,7 +403,12 @@ function _applyLevelImage(img) {
     // Resize canvases to match the loaded image dimensions.
     game.state.mainCtx.canvas.width  = w + 4 * cs;
     game.state.mainCtx.canvas.height = h + 4 * cs;
+    if (game.debugCanvas) {
+        game.debugCanvas.width = w + 4 * cs;
+        game.debugCanvas.height = h + 4 * cs;
+    }
     game.state.fillCanvas();
+    setDebugOverlay(false);
 
     game.grid.reset();
 
@@ -376,6 +441,7 @@ function _applyLevelImage(img) {
 
     // Start timing.
     game.state.levelStartTime    = Date.now();
+    game.narrowSidebarWarderTimer = Date.now();
     game.state.lastFrameTime     = 0;
     game.state.levelElapsedSeconds = 0;
 
@@ -419,6 +485,52 @@ function _animateLevelClear(onDone) {
 }
 
 
+// ── Narrow sidebar rendering ─────────────────────────────────────────────────
+function _renderNarrowSidebars() {
+    const leftCanvas  = game.narrowLeftCanvas;
+    const rightCanvas = game.narrowRightCanvas;
+    if (!leftCanvas || !rightCanvas) return;
+    if (leftCanvas.style.display === 'none') return;
+
+    const s        = game.settingsData ?? {};
+    const barColor = s.narrow_sidebar_color ?? '#00ff00';
+    const bgColor  = s.narrow_sidebar_bg    ?? '#444444';
+    const markColor= s.narrow_sidebar_mark  ?? '#ff0000';
+    const h = leftCanvas.height;
+    const w = leftCanvas.width;
+
+    // Left sidebar: shows cleared area, bg fills from top
+    const lCtx      = leftCanvas.getContext('2d');
+    const clearedPct = game.clearedArea ?? 0;
+    const targetPct  = game.level?.targetAreaPercent ?? 70;
+    const clearedH   = Math.round(clearedPct / 100 * h);
+    const markY      = Math.round(targetPct / 100 * h);
+
+    lCtx.fillStyle = bgColor;
+    lCtx.fillRect(0, 0, w, clearedH);
+    lCtx.fillStyle = barColor;
+    lCtx.fillRect(0, clearedH, w, h - clearedH);
+    // Threshold mark line
+    lCtx.fillStyle = markColor;
+    lCtx.fillRect(0, markY - 1, w, 2);
+
+    // Right sidebar: counts down 60 s, then spawns a warder and resets
+    const WARDER_INTERVAL_MS = 60000;
+    const elapsed = Date.now() - (game.narrowSidebarWarderTimer ?? Date.now());
+    const filledH  = Math.round(Math.min(elapsed / WARDER_INTERVAL_MS, 1) * h);
+
+    const rCtx = rightCanvas.getContext('2d');
+    rCtx.fillStyle = bgColor;
+    rCtx.fillRect(0, 0, w, filledH);
+    rCtx.fillStyle = barColor;
+    rCtx.fillRect(0, filledH, w, h - filledH);
+
+    if (elapsed >= WARDER_INTERVAL_MS && game.state?.isPlaying) {
+        game.narrowSidebarWarderTimer = Date.now();
+        spawnWarder();
+    }
+}
+
 // ── Main game loop ────────────────────────────────────────────────────────────
 function _gameLoop(now) {
     const state = game.state;
@@ -426,7 +538,7 @@ function _gameLoop(now) {
 
     const needRender = !state.lastFrameTime || (_updateFrame(now) && state.isPlaying);
 
-    if (needRender) _renderFrame();
+    if (needRender) { _renderFrame(); _renderNarrowSidebars(); }
     if (!state.lastFrameTime || state.isPlaying) state.lastFrameTime = now;
 
     if (state.hasCollision) {
@@ -461,26 +573,76 @@ function _renderFrame() {
     for (const warder of game.level.warders) warder.render();
 }
 
+function _clearDebugOverlay() {
+    if (!game.debugCtx || !game.debugCanvas) return;
+    game.debugCtx.clearRect(0, 0, game.debugCanvas.width, game.debugCanvas.height);
+}
+
+function _drawDebugOverlay() {
+    if (!game.debugCtx || !game.grid || !game.level) return;
+
+    const ctx = game.debugCtx;
+    const cs = game.config.cellSize;
+
+    ctx.clearRect(0, 0, game.debugCanvas.width, game.debugCanvas.height);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+    ctx.fillRect(2 * cs, 2 * cs, game.config.canvasWidth, game.config.canvasHeight);
+
+    ctx.font = `bold ${Math.max(8, Math.floor(cs * 0.8))}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (let y = 0; y < game.grid.rows; y++) {
+        for (let x = 0; x < game.grid.cols; x++) {
+            const cell = game.grid.cellValue(x, y);
+            const isCleared = !!(cell & CELL_CLEARED);
+            const glyph = isCleared ? '+' : 'X';
+            ctx.fillStyle = isCleared ? '#00ff55' : '#ff3b3b';
+            ctx.fillText(glyph, (x + 2.5) * cs, (y + 2.5) * cs);
+        }
+    }
+
+    ctx.fillStyle = '#ffe94a';
+    for (const enemy of [...game.level.balls, ...game.level.warders]) {
+        if (!game.grid.isPositionValid(enemy.x, enemy.y)) continue;
+        ctx.fillText('O', (enemy.x + 2.5) * cs, (enemy.y + 2.5) * cs);
+    }
+}
+
 function _updateFrame(now) {
     const state = game.state;
     const level = game.level;
     const dt    = state.lastFrameTime ? (now - state.lastFrameTime) / 1000 : 0;
+    const manualQueue = game.manualStepQueue || [];
+    const manualDir = manualQueue.length > 0 ? manualQueue.shift() : null;
 
-    if (game.cursor.direction === false)
+    if (game.cursor.direction === false) {
         game.cursorMoveAcc = 0;
-    else
+    } else {
         game.cursorMoveAcc += dt * (state.cursorSpeed + state.bonusSpeed);
+    }
 
     game.enemyMoveAcc += dt * Math.max(0, level.enemySpeed - level.enemySlowdown);
 
-    const cursorSteps = Math.floor(game.cursorMoveAcc);
+    let cursorSteps = Math.floor(game.cursorMoveAcc);
     const enemySteps  = Math.floor(game.enemyMoveAcc);
     game.cursorMoveAcc -= cursorSteps;
     game.enemyMoveAcc  -= enemySteps;
 
+    if (manualDir) {
+        // Alt+Arrow precision mode: override to one cell in requested direction.
+        setCursorDirection(manualDir);
+        cursorSteps = 1;
+        game.cursorMoveAcc = 0;
+    }
+
     if (cursorSteps < 1 && enemySteps < 1) return false;
 
     game.cursor.update(cursorSteps);
+
+    if (manualDir && game.cursor.direction !== false) {
+        // Keep precision input discrete; each Alt+Arrow press moves exactly one cell.
+        game.cursor.setDirection(false);
+    }
 
     // Bonus pickup check.
     if (game.bonus && cursorSteps >= 1) {
@@ -585,6 +747,9 @@ function _handleConquer(clearedPercent, targetPercent) {
 
     if (clearedPercent < targetPercent) return;
 
+    // Update narrow sidebars to reflect 100% before the loop stops.
+    _renderNarrowSidebars();
+
     // Level complete.
     if (game.ui.showLevelComplete) game.ui.showLevelComplete();
     flashEffect({ duration: 50, opacity: 0.9 });
@@ -638,12 +803,16 @@ function _canSpawnBonusNow() {
     if (game.bonusTimerActive) return false;
     if (game.level?.tankMode) return false;
     if (game.grid.trail.length > 0) return false;
-    if (game.clearedArea >= BONUS_SPAWN_CLEARED_THRESHOLD) return false;
+    const maxCleared = game.level?.bonusSpawnMaxCleared ?? BONUS_SPAWN_CLEARED_THRESHOLD;
+    if (game.clearedArea >= maxCleared) return false;
 
-    const enableThreeBonusRule = !!game.settingsData?.three_bonus;
-    if (!enableThreeBonusRule) return true;
+    let milestones = game.level?.bonusSpawnMilestones;
+    if (!Array.isArray(milestones)) {
+        const enableThreeBonusRule = !!game.settingsData?.three_bonus;
+        if (!enableThreeBonusRule) return true;
+        milestones = [10, 25, 45];
+    }
 
-    const milestones = [10, 25, 45];
     const spawnedCount = game.bonusSpawnedCount || 0;
     if (spawnedCount >= milestones.length) return false;
     return game.clearedArea >= milestones[spawnedCount];

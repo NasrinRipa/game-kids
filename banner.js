@@ -265,7 +265,7 @@ export class BannerController {
         }, done);
     }
 
-    _doubleFlashOver(renderer, done, flashMs = 90, gapMs = 200) {
+    _doubleFlashOver(renderer, done, flashMs = 90, gapMs = 200, color = '#ffffff') {
         let count = 0;
         const runOne = () => {
             this._animate(flashMs, (p) => {
@@ -274,7 +274,7 @@ export class BannerController {
                 this._drawAll((ctx, w, h) => {
                     ctx.save();
                     ctx.globalAlpha = a;
-                    ctx.fillStyle = '#ffffff';
+                    ctx.fillStyle = color;
                     ctx.fillRect(0, 0, w, h);
                     ctx.restore();
                 });
@@ -358,8 +358,9 @@ export class BannerController {
                 ctx.fillStyle = '#021421';
                 ctx.fillRect(0, 0, w, h);
 
-                const bandX = (p * 1.2 - 0.2) * w;
-                const grad = ctx.createLinearGradient(bandX - 50, 0, bandX + 50, 0);
+                // Push the highlight band fully beyond the right edge by animation end.
+                const bandX = (p * 1.38 - 0.18) * w;
+                const grad = ctx.createLinearGradient(bandX - 64, 0, bandX + 64, 0);
                 grad.addColorStop(0, 'rgba(0,255,255,0)');
                 grad.addColorStop(0.5, `rgba(0,255,255,${0.18 + 0.22 * wave})`);
                 grad.addColorStop(1, 'rgba(0,255,255,0)');
@@ -455,51 +456,112 @@ export class BannerController {
         }, done);
     }
 
-    _lifeBonusIcon(done) {
-        const img = _loadIcon('life');
-        const totalMs = 1300;
+    _renderLifeHeartFrame(sign, signFillColor, signStrokeColor, gloomyRed = false) {
+        this._drawAll((ctx, w, h) => {
+            const bgGrad = ctx.createLinearGradient(0, 0, w, h);
+            bgGrad.addColorStop(0, '#18040a');
+            bgGrad.addColorStop(0.55, '#2a0812');
+            bgGrad.addColorStop(1, '#0e0307');
+            ctx.fillStyle = bgGrad;
+            ctx.fillRect(0, 0, w, h);
 
-        this._animate(totalMs, (p) => {
-            const zoom = p < 0.55
-                ? 0.35 + (p / 0.55) * 0.95
-                : 1.3 - Math.min((p - 0.55) / 0.45, 1) * 0.25;
-            const plusAlpha = Math.min(p / 0.22, 1);
-            const iconAlpha = Math.min((p - 0.1) / 0.22, 1);
-
-            this._drawAll((ctx, w, h) => {
-                ctx.fillStyle = '#001133';
+            if (gloomyRed) {
+                const hazeA = ctx.createRadialGradient(w * 0.18, h * 0.5, 0, w * 0.18, h * 0.5, w * 0.68);
+                hazeA.addColorStop(0, 'rgba(255,40,40,0.26)');
+                hazeA.addColorStop(1, 'rgba(255,40,40,0)');
+                ctx.fillStyle = hazeA;
                 ctx.fillRect(0, 0, w, h);
 
-                const centerY = h * 0.5;
-                const plusX = w * 0.34;
-                const iconX = w * 0.62;
-                const iconSz = Math.min(w, h) * 0.42;
+                const hazeB = ctx.createRadialGradient(w * 0.86, h * 0.4, 0, w * 0.86, h * 0.4, w * 0.74);
+                hazeB.addColorStop(0, 'rgba(180,20,30,0.22)');
+                hazeB.addColorStop(1, 'rgba(180,20,30,0)');
+                ctx.fillStyle = hazeB;
+                ctx.fillRect(0, 0, w, h);
+            }
 
-                ctx.save();
-                ctx.globalAlpha = Math.max(0, Math.min(plusAlpha, 1));
-                ctx.font = `bold ${Math.max(13, Math.min(24, h * 0.38))}px monospace`;
-                ctx.fillStyle = '#9cff9c';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText('+', plusX, centerY);
-                ctx.restore();
+            // Keep heart proportions fixed regardless of banner aspect ratio.
+            const heartH = Math.max(30, Math.min(64, h * 0.78));
+            const heartW = heartH * 0.95;
+            const heartCx = w * 0.58;
+            const heartCy = h * 0.52;
 
-                ctx.save();
-                ctx.translate(iconX, centerY);
-                ctx.scale(zoom, zoom);
-                ctx.globalAlpha = Math.max(0, Math.min(iconAlpha, 1));
-                if (img.complete && img.naturalWidth) {
-                    ctx.drawImage(img, -iconSz / 2, -iconSz / 2, iconSz, iconSz);
-                } else {
-                    ctx.font = `bold ${Math.max(10, Math.min(16, h * 0.24))}px monospace`;
-                    ctx.fillStyle = '#ff8899';
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'middle';
-                    ctx.fillText('LIFE', 0, 0);
+            const signSize = Math.max(22, Math.min(48, heartH * 0.78));
+            const signX = heartCx - heartW * 1.18;
+            const signY = heartCy;
+
+            ctx.save();
+            ctx.font = `bold ${signSize}px monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.lineWidth = Math.max(2, signSize * 0.15);
+            ctx.strokeStyle = signStrokeColor;
+            ctx.fillStyle = signFillColor;
+            ctx.strokeText(sign, signX, signY);
+            ctx.fillText(sign, signX, signY);
+            ctx.restore();
+
+            const lifeImg = _loadIcon('life');
+            ctx.save();
+            if (lifeImg.complete && lifeImg.naturalWidth) {
+                ctx.drawImage(lifeImg, heartCx - heartW / 2, heartCy - heartH / 2, heartW, heartH);
+            }
+            ctx.restore();
+        });
+    }
+
+    _levelCompleteFlashAnimation(done) {
+        const totalMs = 760;
+        const windows = [
+            [0.08, 0.24],
+            [0.38, 0.58],
+        ];
+
+        this._animate(totalMs, (p) => {
+            this._drawText('LEVEL COMPLETE', { bg: '#12320f', color: '#9dff6e' });
+
+            let flashAlpha = 0;
+            for (const [start, end] of windows) {
+                if (p >= start && p <= end) {
+                    const local = (p - start) / (end - start);
+                    const pulse = local < 0.5 ? local * 2 : (1 - local) * 2;
+                    flashAlpha = Math.max(flashAlpha, pulse);
                 }
-                ctx.restore();
-            });
+            }
+
+            if (flashAlpha > 0) {
+                this._drawAll((ctx, w, h) => {
+                    ctx.save();
+                    ctx.globalAlpha = flashAlpha * 0.9;
+                    const flashGrad = ctx.createLinearGradient(0, 0, w, 0);
+                    flashGrad.addColorStop(0, 'rgba(255,255,255,0.3)');
+                    flashGrad.addColorStop(0.5, 'rgba(255,255,255,1)');
+                    flashGrad.addColorStop(1, 'rgba(255,255,255,0.3)');
+                    ctx.fillStyle = flashGrad;
+                    ctx.fillRect(0, 0, w, h);
+                    ctx.restore();
+                });
+            }
         }, done);
+    }
+
+    _lifeBonusIcon(done) {
+        const renderBase = () => this._renderLifeHeartFrame('-', '#ffffff', '#000000', true);
+
+        this._runSequential([
+            (next) => this._animate(120, () => renderBase(), next),
+            (next) => this._doubleFlashOver(renderBase, next, 95, 130, '#000000'),
+            (next) => this._animate(320, () => renderBase(), next),
+        ], done);
+    }
+
+    _lifeCapturedIcon(done) {
+        const renderBase = () => this._renderLifeHeartFrame('+', '#22dd55', '#003311', false);
+
+        this._runSequential([
+            (next) => this._animate(180, () => renderBase(), next),
+            (next) => this._doubleFlashOver(renderBase, next, 100, 170, '#ffffff'),
+            (next) => this._animate(240, () => renderBase(), next),
+        ], done);
     }
 
     _bonusTimer(type, durationSec, isEffectActive, getRemainingMs, done) {
@@ -652,79 +714,7 @@ export class BannerController {
             autoFadeGoOn: true,
             run: (done) => {
                 this._sidebar('OOPS');
-                this._animate(1000, (p) => {
-                    const shake = p < 0.55 ? Math.sin(p * Math.PI * 15) * 5 * (1 - p / 0.55) : 0;
-                    const flashAlpha = p < 0.22 ? 1 - p / 0.22 : 0;
-                    this._drawAll((ctx, w, h) => {
-                        ctx.fillStyle = '#330000';
-                        ctx.fillRect(0, 0, w, h);
-                        if (flashAlpha > 0) {
-                            ctx.save();
-                            ctx.globalAlpha = flashAlpha;
-                            ctx.fillStyle = '#ffffff';
-                            ctx.fillRect(0, 0, w, h);
-                            ctx.restore();
-                        }
-                        ctx.save();
-                        ctx.translate(w / 2 + shake, h / 2);
-                        ctx.font = `bold ${Math.max(15, Math.min(24, h * 0.34))}px monospace`;
-                        ctx.fillStyle = '#ff5555';
-                        ctx.textAlign = 'center';
-                        ctx.textBaseline = 'middle';
-                        ctx.fillText('OOPS!', 0, 0);
-                        ctx.restore();
-
-                        // Broken-heart companion animation for OOPS.
-                        const heartBase = Math.min(w, h) * 0.14;
-                        const heartScale = p < 0.35
-                            ? 0.3 + (p / 0.35) * 0.95
-                            : 1.25 - Math.min((p - 0.35) / 0.65, 1) * 0.35;
-                        const crack = Math.max(0, Math.min((p - 0.28) / 0.5, 1));
-                        const split = heartBase * 0.09 * crack;
-                        const hx = w / 2;
-                        const hy = h * 0.74;
-
-                        const drawHalf = (dir) => {
-                            ctx.save();
-                            ctx.translate(hx + dir * split, hy);
-                            ctx.scale(heartScale, heartScale);
-                            ctx.beginPath();
-                            if (dir < 0) {
-                                ctx.rect(-heartBase * 1.2, -heartBase * 1.2, heartBase * 1.2, heartBase * 2.2);
-                            } else {
-                                ctx.rect(0, -heartBase * 1.2, heartBase * 1.2, heartBase * 2.2);
-                            }
-                            ctx.clip();
-
-                            ctx.beginPath();
-                            ctx.moveTo(0, heartBase * 0.95);
-                            ctx.bezierCurveTo(-heartBase * 1.0, heartBase * 0.25, -heartBase * 1.05, -heartBase * 0.6, 0, -heartBase * 0.08);
-                            ctx.bezierCurveTo(heartBase * 1.05, -heartBase * 0.6, heartBase * 1.0, heartBase * 0.25, 0, heartBase * 0.95);
-                            ctx.closePath();
-                            ctx.fillStyle = '#ff3b64';
-                            ctx.fill();
-                            ctx.restore();
-                        };
-
-                        drawHalf(-1);
-                        drawHalf(1);
-
-                        if (crack > 0) {
-                            ctx.save();
-                            ctx.translate(hx, hy);
-                            ctx.scale(heartScale, heartScale);
-                            ctx.strokeStyle = '#ffd9e0';
-                            ctx.lineWidth = Math.max(1.2, heartBase * 0.06);
-                            ctx.beginPath();
-                            ctx.moveTo(0, -heartBase * 0.2);
-                            ctx.lineTo(-heartBase * 0.16, heartBase * 0.1);
-                            ctx.lineTo(heartBase * 0.08, heartBase * 0.36);
-                            ctx.lineTo(-heartBase * 0.12, heartBase * 0.62);
-                            ctx.stroke();
-                            ctx.restore();
-                        }
-                    });
-                }, done);
+                this._lifeBonusIcon(done);
             },
         });
     }
@@ -733,7 +723,6 @@ export class BannerController {
         this.syncSizes();
         this._enqueue({
             tag: 'game-over',
-            autoFadeGoOn: true,
             run: (done) => {
                 this._sidebar('GAME OVER');
                 this._animate(2600, (p) => {
@@ -765,9 +754,11 @@ export class BannerController {
             run: (done) => {
                 this._sidebar('LEVEL COMPLETE');
                 const draw = () => this._drawText('LEVEL COMPLETE', { bg: '#12320f', color: '#9dff6e' });
-                draw();
-                this._rememberStaticFrame('LEVEL COMPLETE', draw);
-                done();
+                this._levelCompleteFlashAnimation(() => {
+                    draw();
+                    this._rememberStaticFrame('LEVEL COMPLETE', draw);
+                    done();
+                });
             },
         });
     }
@@ -836,7 +827,7 @@ export class BannerController {
                         (next) => this._bonusTimer(type, durationSec, isEffectActive, getRemainingMs, next),
                     ], done);
                 } else if (type === 'life') {
-                    this._lifeBonusIcon(done);
+                    this._lifeCapturedIcon(done);
                 } else {
                     this._bonusIcon(type, done);
                 }

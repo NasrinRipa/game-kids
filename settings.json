@@ -1,33 +1,39 @@
 {
     "game": {
-        "gridCols": 90,
-        "gridRows": 60,
-        "cellSize": 10,
-        "carry_over_speed": false,
+        "gridCols": 60,
+        "gridRows": 40,
+        "cellSize": 20,
+        "carry_over_speed": true,
         "speed_lost_on_death":true,
         "three_bonus": true,
         "image_folder": "pics",
         "initial_lives": 3,
-        "fullscreen_statusbar": true,
-        "sidebar": null,
-        "sidebar_width": "auto",
-        "sidebar_height": "auto",
+        "each_level_lives":3,
+        "sidebar_loc": "top",
+        "sidebar_width": "200",
+        "sidebar_height": "100",
         "grid_autofit": false,
         "title_fontsize": 50,
         "sidebar_item_fontsize": 36,
         "sidebar_value_fontsize": 24,
         "banner_fontsize": 24,
-        "colorEmpty":        "#8899aa",
-        "colorBorder":       "#22aacc",
+        "colorEmpty":        "#0905c7",
+        "colorBorder":       "#000000",
         "colorBall":         "#ffffff",
         "colorBallCenter":   "#000000",
-        "colorWarder":       "#000000",
-        "colorWarderCenter": "#f80000",
-        "colorCursor":       "#aa00aa",
-        "colorCursorCenter": "#00aaaa",
+        "colorWarder":       "#ffffff",
+        "colorWarderCenter": "#ff0000",
+        "colorCursor":       "#aaaa00",
+        "colorCursorCenter": "#aaaa00",
         "colorCursorEffect": "#ffffff",
-        "colorTrail":        "#a800a8",
-        "tank_auto_stop":     true
+        "colorTrail":        "#ff0000",
+        "tank_auto_stop":     true,
+        "narrow_sidebar_width": 8,
+        "narrow_sidebar_color": "#00ff00",
+        "narrow_sidebar_bg": "#444444",
+        "narrow_sidebar_mark": "#ff0000",
+        "narrow_sidebar_show": true
+
     },
     "levels": [
         {
@@ -35,9 +41,12 @@
             "ballCount": 3,
             "warderCount": 1,
             "cursorSpeed": 20,
-            "enemySpeed": 20,
+            "enemySpeed": 5,
             "targetAreaPercent": 70,
-            "bonusTypes": ["freez","speed", "sneaky", "life"]
+            "bonusTypes":  [ "sneaky", "tank"],
+            "bonusSpawnMilestones": [0, 0, 0],
+            "bonusSpawnMaxCleared": 80,
+            "none":["freez","speed", "sneaky", "life"]
         },
         {
             "image": "pic (2).jpg",
@@ -46,7 +55,10 @@
             "cursorSpeed": 25,
             "enemySpeed": 25,
             "targetAreaPercent": 70,
-            "bonusTypes": ["freez","tank", "speed", "slow", "sneaky"]
+            "bonusTypes": ["tank","sneaky"],
+            "bonusSpawnMilestones": [0, 0, 0],
+            "bonusSpawnMaxCleared": 80,
+            "none":["freez","tank", "speed", "slow", "sneaky"]
         },
         {
             "image": "pic (3).jpg",
@@ -55,7 +67,9 @@
             "cursorSpeed": 25,
             "enemySpeed": 25,
             "targetAreaPercent": 70,
-            "bonusTypes": ["freez","tank", "speed", "slow", "sneaky", "killward"]
+            "bonusTypes": ["freez","tank", "speed", "slow", "sneaky", "killward"],
+            "bonusSpawnMilestones": [10, 25, 45],
+            "bonusSpawnMaxCleared": 80
         },
         {
             "image": "pic (4).jpg",
@@ -64,7 +78,9 @@
             "cursorSpeed": 25,
             "enemySpeed": 25,
             "targetAreaPercent": 70,
-            "bonusTypes": ["freez","tank", "speed", "slow", "sneaky", "killward"]
+            "bonusTypes": ["freez","tank", "speed", "slow", "sneaky", "killward"],
+            "bonusSpawnMilestones": [10, 25, 45],
+            "bonusSpawnMaxCleared": 80
         },
         {
             "image": "pic (5).jpg",
@@ -73,7 +89,9 @@
             "cursorSpeed": 25,
             "enemySpeed": 25,
             "targetAreaPercent": 70,
-            "bonusTypes": ["freez","tank", "speed", "slow", "sneaky", "killward"]
+            "bonusTypes": ["freez","tank", "speed", "slow", "sneaky", "killward"],
+            "bonusSpawnMilestones": [10, 25, 45],
+            "bonusSpawnMaxCleared": 80
         },
         {
             "image": "pic (6).jpg",
@@ -82,7 +100,9 @@
             "cursorSpeed": 25,
             "enemySpeed": 25,
             "targetAreaPercent": 70,
-            "bonusTypes": ["freez","tank", "speed", "slow", "sneaky", "killward"]
+            "bonusTypes": ["freez","tank", "speed", "slow", "sneaky", "killward"],
+            "bonusSpawnMilestones": [10, 25, 45],
+            "bonusSpawnMaxCleared": 80
         },
         {
             "image": "pic (7).jpg",
@@ -91,7 +111,9 @@
             "cursorSpeed": 25,
             "enemySpeed": 25,
             "targetAreaPercent": 70,
-            "bonusTypes": ["freez","tank", "speed", "slow", "sneaky", "killward"]
+            "bonusTypes": ["freez","tank", "speed", "slow", "sneaky", "killward"],
+            "bonusSpawnMilestones": [10, 25, 45],
+            "bonusSpawnMaxCleared": 80
         },
         {
             "image": "pic (8).jpg",
@@ -100,7 +122,9 @@
             "cursorSpeed": 25,
             "enemySpeed": 25,
             "targetAreaPercent": 70,
-            "bonusTypes": ["freez","tank", "speed", "slow", "sneaky", "killward"]
+            "bonusTypes": ["freez","tank", "speed", "slow", "sneaky", "killward"],
+            "bonusSpawnMilestones": [10, 25, 45],
+            "bonusSpawnMaxCleared": 80
         },
         {
             "image": "pic (9).jpg",
@@ -109,7 +133,9 @@
             "cursorSpeed": 25,
             "enemySpeed": 25,
             "targetAreaPercent": 70,
-            "bonusTypes": ["freez","tank", "speed", "slow", "sneaky", "killward"]
+            "bonusTypes": ["freez","tank", "speed", "slow", "sneaky", "killward"],
+            "bonusSpawnMilestones": [10, 25, 45],
+            "bonusSpawnMaxCleared": 80
         },
         {
             "image": "pic (10).jpg",
@@ -118,7 +144,9 @@
             "cursorSpeed": 25,
             "enemySpeed": 25,
             "targetAreaPercent": 70,
-            "bonusTypes": ["freez","tank", "speed", "slow", "sneaky", "killward"]
+            "bonusTypes": ["freez","tank", "speed", "slow", "sneaky", "killward"],
+            "bonusSpawnMilestones": [10, 25, 45],
+            "bonusSpawnMaxCleared": 80
         }
     ]
 }
