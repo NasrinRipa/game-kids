@@ -26,7 +26,7 @@ $(function () {
     // ── DOM references ─────────────────────────────────────────────────────────
     const $canvas        = $('#graphics');
     const $playBtn       = $('#play-btn');
-    const $gameStatusTxt = $('#game-status-text');
+    const $pauseBtn      = $('#pause-btn');
     const $levelDisplay  = $('#status-progress-current');
 
     // ── Banner controller ───────────────────────────────────────────────────────
@@ -47,12 +47,22 @@ $(function () {
     $playBtn.prop('disabled', true);
 
     loadLevels().then(() => {
-        $playBtn.prop('disabled', false);
+        $playBtn.prop('disabled', false).show();
         banner.showReadyToStart();
+        const introSrc = game.settingsData?.intro_image;
+        if (introSrc) {
+            const $img = $('#intro-img');
+            $img.attr('src', introSrc);
+            $img[0].onload = () => {
+                updateLayout();
+                // small delay to ensure layout dimensions are applied before fading in
+                requestAnimationFrame(() => $img.css('opacity', 1));
+            };
+        }
         updateLayout();
     }).catch(err => {
         console.error('Failed to load settings.json:', err);
-        $playBtn.prop('disabled', false);
+        $playBtn.prop('disabled', false).show();
         banner.showReadyToStart();
     });
 
@@ -73,7 +83,7 @@ $(function () {
     game.ui.showLevelComplete = () => banner.showLevelComplete();
     game.ui.showGameOver = () => banner.showGameOver();
     game.ui.showCongrats = (isLastLevel) => banner.showCongrats(isLastLevel);
-    game.ui.showOops     = () => banner.showOops();
+    game.ui.showOops     = (cb) => banner.showOops(cb);
     game.ui.showPaused = () => banner.showPaused();
     game.ui.showConquer = (deltaScore, showHalfway, opts) => banner.showConquer(deltaScore, showHalfway, opts);
 
@@ -121,9 +131,11 @@ $(function () {
         if (game.state.isPlaying) {
             game.state.startLoop();
             banner.showGoOn();
+            $pauseBtn.html('<span class="glyphicon glyphicon-pause"></span> Pause').show();
         } else {
             game.state.stopLoop();
             banner.showPaused();
+            $pauseBtn.html('<span class="glyphicon glyphicon-play"></span> Unpause').show();
         }
     }
 
@@ -198,10 +210,18 @@ $(function () {
             return;
         }
 
-        if (key === 16) {                     // Shift – stop cursor
+        if (key === 16) {                     // Shift – stop cursor (unless an arrow is held)
             if (game.state?.isPlaying) {
                 e.preventDefault();
-                setCursorDirection('stop');
+                if (game.heldArrowKey) {
+                    // Arrow already held: enter slow-step mode.
+                    game.shiftSlowDir = KEY_DIRS[game.heldArrowKey];
+                    game.shiftLastStepTime = performance.now() - (game.settingsData?.cursor_slow_timer ?? 500); // fire first step immediately
+                    setCursorDirection('stop');
+                } else {
+                    game.shiftSlowDir = null;
+                    setCursorDirection('stop');
+                }
             }
             return;
         }
@@ -209,15 +229,52 @@ $(function () {
         if (!game.state?.isPlaying || !(key in KEY_DIRS)) return;
         e.preventDefault();
 
+        if (!e.shiftKey && key !== 32) {
+            // Plain arrow: track as held key, move normally.
+            game.heldArrowKey = key;
+            game.shiftSlowDir = null;
+        }
+
         if (e.shiftKey && key !== 32) {
-            // Shift+Arrow queues precise one-cell movement, consumed at most once per frame.
-            game.manualStepQueue = game.manualStepQueue || [];
-            game.manualStepQueue.push(KEY_DIRS[key]);
-            setCursorDirection('stop');
+            const now = performance.now();
+            const dir = KEY_DIRS[key];
+            game.heldArrowKey = key;   // track so shift-release can resume normal movement
+            if (!game.shiftSlowDir) {
+                // First Shift+Arrow press: step once immediately, then enter slow mode.
+                game.manualStepQueue = game.manualStepQueue || [];
+                game.manualStepQueue.push(dir);
+                game.shiftLastStepTime = now;
+                game.shiftSlowDir = dir;
+                console.log(`[shift] fresh press, slow mode started`);
+            }
+            // Subsequent key events ignored – game loop handles the timer.
             return;
         }
 
         setCursorDirection(KEY_DIRS[key]);
+    });
+
+    $(document).keyup((e) => {
+        const key = e.which;
+        if (key === 16) {                                 // Shift released
+            game.shiftSlowDir = null;
+            game.shiftLastStepTime = 0;
+            if (game.state?.isPlaying) {
+                if (game.heldArrowKey) {
+                    // Arrow still held: resume normal movement.
+                    setCursorDirection(KEY_DIRS[game.heldArrowKey]);
+                } else {
+                    setCursorDirection('stop');
+                }
+            }
+        } else if (key in KEY_DIRS && key !== 32) {       // Arrow released
+            if (game.heldArrowKey === key) game.heldArrowKey = null;
+            if (game.shiftSlowDir === KEY_DIRS[key]) {
+                game.shiftSlowDir = null;
+                game.shiftLastStepTime = 0;
+                if (game.state?.isPlaying) setCursorDirection('stop');
+            }
+        }
     });
 
     // ── Canvas click → cursor direction ───────────────────────────────────────
@@ -238,14 +295,33 @@ $(function () {
         setCursorDirectionToward([canvasX, canvasY]);
     });
 
-    // ── Play button ───────────────────────────────────────────────────────────
-    $playBtn.show().on('click', (e) => {
+    // ── Play / Pause buttons ───────────────────────────────────────────────────
+    $playBtn.on('click', (e) => {
         e.preventDefault();
-        _startNewGame();
-        _startLevel();
+        _fadeIntroThenStart();
+    });
+
+    $pauseBtn.on('click', (e) => {
+        e.preventDefault();
+        _togglePause();
     });
 
     // ── Internal helpers ───────────────────────────────────────────────────────
+
+    function _fadeIntroThenStart() {
+        const $img = $('#intro-img');
+        if ($img.css('opacity') !== '0' && $img.is(':visible') && $img.attr('src')) {
+            $img.css('opacity', 0);
+            setTimeout(() => {
+                $img.hide();
+                _startNewGame();
+                _startLevel();
+            }, 500);
+        } else {
+            _startNewGame();
+            _startLevel();
+        }
+    }
 
     function _startNewGame() {
         newGame();
@@ -263,7 +339,7 @@ $(function () {
 
         // Update button area.
         $playBtn.prop('disabled', true).hide();
-        $gameStatusTxt.show();
+        $pauseBtn.html('<span class="glyphicon glyphicon-pause"></span> Pause').show();
 
         if (!game.state.isStarted) $('.my-panel').removeClass('hidden');
 
@@ -287,7 +363,7 @@ $(function () {
         endLevel(false);
         quitGame();
 
-        $gameStatusTxt.hide();
+        $pauseBtn.hide();
         $playBtn.prop('disabled', false).show()
             .html('<span class="glyphicon glyphicon-repeat"></span> Try Again')
             .off('click').on('click', (e) => {
@@ -299,7 +375,7 @@ $(function () {
 
     function _onFault() {
         setTimeout(() => {
-            $gameStatusTxt.hide();
+            $pauseBtn.hide();
             $playBtn.prop('disabled', false).show()
                 .html('<span class="glyphicon glyphicon-play"></span> Play')
                 .off('click').on('click', (e) => {
@@ -318,7 +394,7 @@ $(function () {
         setTimeout(() => {
             const hasMoreLevels = game.state.levelIndex < game.state.totalLevels;
 
-            $gameStatusTxt.hide();
+            $pauseBtn.hide();
 
             if (hasMoreLevels) {
                 $playBtn.prop('disabled', false).show()
@@ -413,7 +489,6 @@ $(function () {
         const gridAutofit = s.grid_autofit ?? false;
 
         // Toggle non-playfield elements.
-        $('h3.text-center').toggle(!isFs);
         $('.controls-row').toggle(!isFs);
         $('.hint-row').toggle(!isFs);
 
@@ -459,6 +534,14 @@ $(function () {
             const pageW  = Math.max(Math.round(totalW * scale) + 24, 400);
             $('.page-wrap').css({ width: pageW + 'px', 'max-width': '', margin: '0 auto 10px', padding: '', 'flex-direction': '' });
             $('#game-area').css({ zoom: scale, width: totalW + 'px', margin: '0 auto', 'flex-shrink': '' });
+            const gameAreaW = Math.round(totalW * scale);
+            const ctrlH = Math.max(60, Math.min(120, Math.round(gameAreaW / 8)));
+            const btnW  = Math.min(Math.round(gameAreaW / 2 * 0.70), 220);
+            $('.controls-row').css({ width: gameAreaW + 'px', height: ctrlH + 'px', margin: '0 auto 10px', 'max-width': '' });
+            $('#play-btn, #pause-btn').css({ width: '', height: '', 'max-width': '' });
+            const introW = totalW, introH = totalH;
+            const $img = $('#intro-img');
+            if ($img.attr('src')) $img.css({ width: introW + 'px', height: introH + 'px' });
             banner.syncSizes();
             return;
         }

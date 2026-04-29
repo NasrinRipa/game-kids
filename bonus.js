@@ -228,6 +228,7 @@ export class Bonus {
                     isEffectActive = () => !!game.level?.tankMode;
                     getRemainingMs = () => Math.max(0, game.bonusTimerExpiresAt - Date.now());
                     level.tankTimeout = startTimedEffect(() => {
+                        const wasActive = level.tankMode;
                         level.tankMode = false;
                         level.tankTimeout = null;
                         // Discard saved trail without triggering conquest.
@@ -236,9 +237,15 @@ export class Bonus {
                         level.saved_copy_trail_nodes = null;
                         level.saved_copy_trail_direction = null;
                         level.saved_copy_trail_pre_index = null;
-                        game.grid.resetTrail(false);
-                        game.cursor.isOnTrail = false;
-                        if (game.config.tankAutoStop) game.cursor.direction = false;
+                        // Only reset the trail if tank mode was still running when this
+                        // cleanup fired. If conquest (cursor.js) already ended tank mode,
+                        // tankMode is already false and the trail belongs to the new
+                        // (post-conquest) cursor movement — do not erase it.
+                        if (wasActive) {
+                            game.grid.resetTrail(false);
+                            game.cursor.isOnTrail = false;
+                            if (game.config.tankAutoStop) game.cursor.direction = false;
+                        }
                     }, this.value);
                 }
                 break;

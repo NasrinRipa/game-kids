@@ -2,6 +2,12 @@
  * banner.js - queued banner animation controller
  */
 
+import { game } from './gamestate.js';
+
+function _dbg(...args) {
+    if (game.config?.consoleLog) console.log(`[banner ${Date.now()}]`, ...args);
+}
+
 const _iconCache = {};
 
 function _loadIcon(type) {
@@ -707,14 +713,22 @@ export class BannerController {
         });
     }
 
-    showOops() {
+    showOops(onComplete) {
+        _dbg('showOops: enqueuing OOPS animation, onComplete=', typeof onComplete,
+             '| banner currently running=', this._running, 'activeTag=', this._activeTag,
+             'queueLength=', this._queue.length);
         this.syncSizes();
         this._enqueue({
             tag: 'oops',
             autoFadeGoOn: true,
             run: (done) => {
+                _dbg('showOops: animation started');
                 this._sidebar('OOPS');
-                this._lifeBonusIcon(done);
+                this._lifeBonusIcon(() => {
+                    _dbg('showOops: _lifeBonusIcon complete, calling onComplete');
+                    if (onComplete) onComplete();
+                    done();
+                });
             },
         });
     }

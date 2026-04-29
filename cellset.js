@@ -271,6 +271,15 @@ export class Grid {
      *   also marked as conquered and erased on the canvas.
      */
     resetTrail(clearGraphics = false) {
+        if (game.config?.consoleLog) {
+            if (game._oopsAnimating) {
+                console.warn(`[resetTrail ${Date.now()}] *** CALLED WHILE OOPS ANIMATION IS RUNNING *** clearGraphics=${clearGraphics}, trailLength=${this.trail.length}`);
+                console.trace('[resetTrail EARLY] call stack');
+            } else {
+                console.log(`[resetTrail ${Date.now()}] called with clearGraphics=${clearGraphics}, trailLength=${this.trail.length}`);
+                console.trace('[resetTrail] call stack');
+            }
+        }
         for (let i = 0; i < this.trail.length; i++) {
             const idx  = this.trail[i];
             const prev = this.cells[idx];

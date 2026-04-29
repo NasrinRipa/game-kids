@@ -112,6 +112,9 @@ export class GameConfig {
         /** Stop the cursor when tank mode expires by timer (no conquest). */
         this.tankAutoStop = true;
 
+        /** Enable debug console.log output when true. */
+        this.consoleLog = false;
+
         // ── Colours ──────────────────────────────────────────────────────────
         this.colorEmpty         = '#000000';   // unexplored cell interior
         this.colorBorder        = '#00aaaa';   // border ring / warder background

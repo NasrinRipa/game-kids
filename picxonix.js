@@ -56,6 +56,7 @@ export function newGame() {
         if (s.initial_lives != null) game.config.initialLives = s.initial_lives;
         if (s.fullscreen_statusbar != null) game.config.fullscreenStatusbar = s.fullscreen_statusbar;
         if (s.tank_auto_stop != null) game.config.tankAutoStop = s.tank_auto_stop;
+        if (s.console_log != null) game.config.consoleLog = !!s.console_log;
         const colorKeys = ['colorEmpty','colorBorder','colorBall','colorBallCenter',
             'colorWarder','colorWarderCenter','colorCursor','colorCursorCenter',
             'colorCursorEffect','colorTrail'];
@@ -69,6 +70,9 @@ export function newGame() {
     game.state.lives = game.config.initialLives;
     game.loopFn = _gameLoop;
     game.manualStepQueue = [];
+    game.shiftLastStepTime = 0;
+    game.shiftSlowDir = null;
+    game.heldArrowKey = null;
 
     _initCanvasContainer();
 
@@ -227,6 +231,9 @@ function _initLevelState(levelIndex) {
     game.cursorMoveAcc = 0;
     game.enemyMoveAcc  = 0;
     game.manualStepQueue = [];
+    game.shiftLastStepTime = 0;
+    game.shiftSlowDir = null;
+    game.heldArrowKey = null;
     game.grid   = game.grid   || new Grid();
     game.cursor = game.cursor || new Cursor();
     game.grid.reset();
@@ -542,6 +549,7 @@ function _gameLoop(now) {
     if (!state.lastFrameTime || state.isPlaying) state.lastFrameTime = now;
 
     if (state.hasCollision) {
+        _dbg('_gameLoop: hasCollision=true, calling _lockAfterCollision + _handleFault');
         _lockAfterCollision();
         _handleFault();
         return;
@@ -613,6 +621,18 @@ function _updateFrame(now) {
     const level = game.level;
     const dt    = state.lastFrameTime ? (now - state.lastFrameTime) / 1000 : 0;
     const manualQueue = game.manualStepQueue || [];
+
+    // Slow-mode: game loop drives the timer so keyboard repeat rate is irrelevant.
+    if (game.shiftSlowDir && !manualQueue.length) {
+        const timer = game.settingsData?.cursor_slow_timer ?? 500;
+        const elapsed = now - (game.shiftLastStepTime ?? 0);
+        console.log(`[loop] shiftSlow elapsed=${elapsed.toFixed(0)}ms timer=${timer}`);
+        if (elapsed >= timer) {
+            manualQueue.push(game.shiftSlowDir);
+            game.shiftLastStepTime = now;
+        }
+    }
+
     const manualDir = manualQueue.length > 0 ? manualQueue.shift() : null;
 
     if (game.cursor.direction === false) {
@@ -670,16 +690,26 @@ function _updateLevelTimer() {
 
 // ── Collision handling ────────────────────────────────────────────────────────
 
+function _dbg(...args) {
+    if (game.config?.consoleLog) console.log(`[fault ${Date.now()}]`, ...args);
+}
+
 function _lockAfterCollision() {
+    _dbg('_lockAfterCollision: freezing loop, lastFrameTime=0, cursor=', game.cursor.pos(), 'lives=', game.state.lives);
     game.state.lastFrameTime = 0;
     game.state.hasCollision  = false;
     const [cx, cy] = game.cursor.pos();
     game.grid.addToTrail(cx, cy, false);
-    setTimeout(_unlockAfterCollision, COLLISION_TIMEOUT);
 }
 
 function _unlockAfterCollision() {
-    if (!game.state.levelStartTime) return;
+    _dbg('_unlockAfterCollision: called, levelStartTime=', game.state.levelStartTime, 'isPlaying=', game.state.isPlaying);
+    if (!game.state.levelStartTime) {
+        _dbg('_unlockAfterCollision: ABORTED (levelStartTime is falsy)');
+        return;
+    }
+    game._oopsAnimating = false;
+    _dbg('_unlockAfterCollision: resetting trail, cursor and warders, then resuming loop');
     game.grid.resetTrail();
     const pos = game.grid.getInitialCursorPos();
     game.cursor.reset(pos[0], pos[1], true);
@@ -687,9 +717,11 @@ function _unlockAfterCollision() {
     for (let i = 0; i < game.level.warderCount; i++)
         game.level.warders[i].reset(warderPositions[i][0], warderPositions[i][1]);
     game.state.startLoop();
+    _dbg('_unlockAfterCollision: loop restarted');
 }
 
 function _handleFault() {
+    _dbg('_handleFault: start, lives before decrement=', game.state.lives, 'isPlaying=', game.state.isPlaying);
     game.state.lives--;
 
     // Fault cancels any currently active timed bonus effect immediately.
@@ -709,11 +741,20 @@ function _handleFault() {
 
     game.ui.updateStatus('update');
     if (game.state.lives > 0) {
-        if (game.ui.showOops) game.ui.showOops();
-        else game.ui.setBanner('Oops..');
+        if (game.ui.showOops) {
+            _dbg('_handleFault: calling showOops, _unlockAfterCollision registered as callback');
+            game._oopsAnimating = true;
+            game.ui.showOops(_unlockAfterCollision);
+        } else {
+            _dbg('_handleFault: no showOops, using setTimeout COLLISION_TIMEOUT=', COLLISION_TIMEOUT);
+            game._oopsAnimating = true;
+            game.ui.setBanner('Oops..');
+            setTimeout(_unlockAfterCollision, COLLISION_TIMEOUT);
+        }
         return;
     }
 
+    _dbg('_handleFault: no lives left, triggering game over');
     if (game.ui.showGameOver) game.ui.showGameOver();
     else game.ui.setBanner('GAME OVER');
     game.state.isPlaying = game.state.isStarted = false;
@@ -760,6 +801,8 @@ function _deactivateActiveTimedBonus({ resetPersistentSlowdown = true } = {}) {
     for (const t of game.activeEffectTimers) clearTimeout(t);
     game.activeEffectTimers = [];
 
+    const cleanupCount = game.activeEffectCleanups.length;
+    _dbg('_deactivateActiveTimedBonus: running', cleanupCount, 'effect cleanups, tankMode=', game.level?.tankMode);
     for (const cleanup of game.activeEffectCleanups) cleanup();
     game.activeEffectCleanups = [];
 
@@ -770,6 +813,7 @@ function _deactivateActiveTimedBonus({ resetPersistentSlowdown = true } = {}) {
         game.level.isInvincible = false;
         if (resetPersistentSlowdown) game.level.enemySlowdown = 0;
         if (game.level.tankMode) {
+            _dbg('_deactivateActiveTimedBonus: tankMode active — calling resetTrail(false) NOW (before animation)');
             game.level.tankMode = false;
             game.level.tankTimeout = null;
             game.level.tankClearedCells = null;
