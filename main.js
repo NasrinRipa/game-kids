@@ -21,6 +21,96 @@ import {
 import { LEVEL_COMPLETE_DISPLAY_DELAY, FAULT_DISPLAY_DELAY } from './constants.js';
 import { BannerController } from './banner.js';
 
+const PASSWORD_GROUPS = [
+    { key: 'upto5', targetLevel: 5 },
+    { key: 'upto10', targetLevel: 10 },
+    { key: 'uptoend', targetLevel: Infinity },
+];
+
+let passwordProfilesPromise = null;
+let activePasswordProfile = null;
+
+async function _sha256Hex(text) {
+    const bytes = new TextEncoder().encode(text);
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function _buildPasswordProfiles() {
+    const passSettings = game.passData ?? null;
+    if (!passSettings) return [];
+
+    const passmax = Math.max(0, Number(passSettings.passmax) || 0);
+    const groups = PASSWORD_GROUPS.map((group) => ({
+        ...group,
+        prefix: String(passSettings[group.key] ?? ''),
+        passwords: new Set(),
+    }));
+
+    for (const group of groups) {
+        for (let i = 1; i <= passmax; i++) {
+            const hash = await _sha256Hex(group.prefix + i);
+            group.passwords.add(hash.slice(-4).toLowerCase());
+        }
+    }
+
+    return groups;
+}
+
+async function _getPasswordProfiles() {
+    if (!passwordProfilesPromise) passwordProfilesPromise = _buildPasswordProfiles();
+    return passwordProfilesPromise;
+}
+
+function _getMaxPlayableLevelFromProfile(profile) {
+    if (!profile) return game.state?.totalLevels ?? 0;
+    const totalLevels = game.state?.totalLevels ?? 0;
+    if (profile.targetLevel === Infinity) return totalLevels;
+    return Math.min(profile.targetLevel, totalLevels);
+}
+
+async function _promptForPasswordProfile() {
+    const profiles = await _getPasswordProfiles();
+    if (!profiles.length) return { targetLevel: Infinity };
+
+    while (true) {
+        const rawPassword = window.prompt('Enter game password', '');
+        if (rawPassword == null) return null;
+
+        const password = rawPassword.trim().toLowerCase();
+        if (!password) continue;
+
+        let bestMatch = null;
+        for (const profile of profiles) {
+            if (!profile.passwords.has(password)) continue;
+            if (!bestMatch || _getMaxPlayableLevelFromProfile(profile) > _getMaxPlayableLevelFromProfile(bestMatch)) {
+                bestMatch = profile;
+            }
+        }
+
+        if (bestMatch) return bestMatch;
+        window.alert('Incorrect password.');
+    }
+}
+
+async function _printAllPasswords() {
+    const passSettings = game.passData ?? null;
+    if (!passSettings) { console.warn('Settings not loaded — open the page in a browser first (settings.json loads on page load).'); return; }
+
+    const passmax = Math.max(0, Number(passSettings.passmax) || 0);
+    const rows = [];
+    for (const group of PASSWORD_GROUPS) {
+        const prefix = String(passSettings[group.key] ?? '');
+        const label = group.targetLevel === Infinity ? 'all levels' : 'up to level ' + group.targetLevel;
+        for (let i = 1; i <= passmax; i++) {
+            const hash = await _sha256Hex(prefix + i);
+            rows.push({ group: group.key, label, index: i, password: hash.slice(-4).toLowerCase() });
+        }
+    }
+    console.table(rows);
+}
+window.printPasswords = () => _printAllPasswords().catch(console.error);
+
 $(function () {
 
     // ── DOM references ─────────────────────────────────────────────────────────
@@ -298,7 +388,7 @@ $(function () {
     // ── Play / Pause buttons ───────────────────────────────────────────────────
     $playBtn.on('click', (e) => {
         e.preventDefault();
-        _fadeIntroThenStart();
+        void _fadeIntroThenStart();
     });
 
     $pauseBtn.on('click', (e) => {
@@ -308,8 +398,12 @@ $(function () {
 
     // ── Internal helpers ───────────────────────────────────────────────────────
 
-    function _fadeIntroThenStart() {
+    async function _fadeIntroThenStart() {
         const $img = $('#intro-img');
+        const passwordProfile = await _promptForPasswordProfile();
+        if (!passwordProfile) return;
+        activePasswordProfile = passwordProfile;
+
         if ($img.css('opacity') !== '0' && $img.is(':visible') && $img.attr('src')) {
             $img.css('opacity', 0);
             setTimeout(() => {
@@ -325,6 +419,7 @@ $(function () {
 
     function _startNewGame() {
         newGame();
+        game.state.maxPlayableLevel = _getMaxPlayableLevelFromProfile(activePasswordProfile);
         $('#status-progress-total').text(game.state.totalLevels);
         updateLayout();
     }
@@ -394,7 +489,8 @@ $(function () {
         game.state.isStarted  = false;
 
         setTimeout(() => {
-            const hasMoreLevels = game.state.levelIndex < game.state.totalLevels;
+            const maxPlayableLevel = game.state.maxPlayableLevel ?? game.state.totalLevels;
+            const hasMoreLevels = game.state.levelIndex < Math.min(maxPlayableLevel, game.state.totalLevels);
 
             $pauseBtn.hide();
 

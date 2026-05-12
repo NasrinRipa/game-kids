@@ -21,6 +21,9 @@ export const game = {
     /** Raw settings loaded from settings.json (the top-level "game" object). */
     settingsData: null,
 
+    /** Password settings loaded from settings.json (the top-level "pass" object). */
+    passData: null,
+
     /** Settings from settings.json "all_levels" — override per-level values when non-null. */
     allLevelsData: {},
 

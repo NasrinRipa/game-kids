@@ -34,6 +34,7 @@ export async function loadLevels() {
     game.settingsData  = data.game       ?? {};
     game.allLevelsData = data.all_levels ?? {};
     game.levelsData    = data.levels      ?? [];
+    game.passData      = data.pass        ?? null;
 }
 
 /** Attach the canvas container div to the given DOM element. */
@@ -817,9 +818,14 @@ function _handleConquer(clearedPercent, targetPercent) {
 
     // Update narrow sidebars to reflect 100% before the loop stops.
     _renderNarrowSidebars();
+    const maxPlayableLevel = game.state?.maxPlayableLevel ?? game.state?.totalLevels ?? Infinity;
 
-    // Level complete.
-    if (game.ui.showLevelComplete) game.ui.showLevelComplete();
+    const isFinalPlayableLevel = game.state.levelIndex >= maxPlayableLevel;
+    if (isFinalPlayableLevel) {
+        if (game.ui.showCongrats) game.ui.showCongrats(true);
+    } else if (game.ui.showLevelComplete) {
+        game.ui.showLevelComplete();
+    }
     flashEffect({ duration: 50, opacity: 0.9 });
     endLevel(true);
 }

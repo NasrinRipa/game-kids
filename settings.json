@@ -1,16 +1,22 @@
 {
     "all_levels": {
         "each_level_lives": null,
-        "speed_lost_on_death": true,
+        "speed_lost_on_death": false,
         "carry_over_speed": true,
         "ballCount": null,
         "warderCount": null,
-        "cursorSpeed": 25,
-        "enemySpeed": 25,
+        "cursorSpeed": 30,
+        "enemySpeed": 20,
         "targetAreaPercent": null,
         "bonusTypes": null,
         "bonusSpawnMilestones": null,
         "bonusSpawnMaxCleared": null
+    },
+    "pass":{
+        "passmax": 50,
+        "upto5":"upto5",
+        "upto10":"play10",
+        "uptoend":"magic"
     },
     "game": {
         "console_log": true,
