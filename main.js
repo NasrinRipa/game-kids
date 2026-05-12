@@ -332,9 +332,11 @@ $(function () {
     function _startLevel() {
         if (!game.level || game.level.levelIndex < 1) return;
 
-        const s = game.settingsData ?? {};
-        if (s.each_level_lives != null && s.each_level_lives > 0) {
-            game.state.lives = s.each_level_lives;
+        const s  = game.settingsData  ?? {};
+        const al = game.allLevelsData ?? {};
+        const each_level_lives = al.each_level_lives ?? s.each_level_lives ?? null;
+        if (each_level_lives != null && each_level_lives > 0) {
+            game.state.lives = each_level_lives;
         }
 
         // Update button area.
@@ -606,6 +608,7 @@ $(function () {
             const gameAreaW = (cols + 4) * cs + 2 * sbarW;
             $('.page-wrap').css({ 'flex-direction': 'row', 'padding-left': '0', 'padding-top': '0' });
             $('#game-area').css({ zoom: scale, width: gameAreaW + 'px', margin: '0', 'flex-shrink': '0' });
+            { const $_i = $('#intro-img'); if ($_i.attr('src')) $_i.css({ width: gameAreaW + 'px', height: (rows + 4) * cs + 'px' }); }
             banner.syncSizes();
             return;
         }
@@ -667,6 +670,7 @@ $(function () {
                 .toggleClass('fs-sidebar-right', sidebarPos === 'right')
                 .css({ display: 'flex', width: sidebarW + 'px', height: canvasH + 'px' });
             $('#game-area').css({ zoom: scale, width: (cols + 4) * cs + 2 * sbarW + 'px', margin: '0', 'flex-shrink': '0' });
+            { const $_i = $('#intro-img'); if ($_i.attr('src')) $_i.css({ width: (cols + 4) * cs + 2 * sbarW + 'px', height: (rows + 4) * cs + 'px' }); }
             banner.syncSizes();
 
         // ── Horizontal sidebar (top / bottom) ──────────────────────────────────
@@ -725,6 +729,7 @@ $(function () {
                 .toggleClass('fs-sidebar-bottom', sidebarPos === 'bottom')
                 .css({ display: 'flex', width: canvasW + 'px', height: sidebarH + 'px' });
             $('#game-area').css({ zoom: scale, width: (cols + 4) * cs + 2 * sbarW + 'px', margin: '0', 'flex-shrink': '0' });
+            { const $_i = $('#intro-img'); if ($_i.attr('src')) $_i.css({ width: (cols + 4) * cs + 2 * sbarW + 'px', height: (rows + 4) * cs + 'px' }); }
             banner.syncSizes();
         }
     }

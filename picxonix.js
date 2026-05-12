@@ -31,8 +31,9 @@ import { CELL_CLEARED, dirs, COLLISION_TIMEOUT, LEVEL_CLEAR_DELAY, LEVEL_CLEAR_D
 export async function loadLevels() {
     const response = await fetch('settings.json');
     const data = await response.json();
-    game.settingsData = data.game ?? {};
-    game.levelsData   = data.levels ?? [];
+    game.settingsData  = data.game       ?? {};
+    game.allLevelsData = data.all_levels ?? {};
+    game.levelsData    = data.levels      ?? [];
 }
 
 /** Attach the canvas container div to the given DOM element. */
@@ -204,28 +205,44 @@ export function setDebugOverlay(enabled) {
 
 function _initLevelState(levelIndex) {
     game.state.levelIndex = levelIndex;
+    const previousEnemySpeed = game.level?.enemySpeed;
+    const previousCursorSpeed = game.state?.cursorSpeed;
+
     const ld = game.levelsData[levelIndex - 1];
     const imageFile = ld && ld.image ? ld.image : null;
     game.level = new LevelConfig(levelIndex, imageFile);
 
+    const al = game.allLevelsData ?? {};
     if (ld) {
-        game.level.ballCount          = ld.ballCount          ?? game.level.ballCount;
-        game.level.warderCount        = ld.warderCount        ?? game.level.warderCount;
-        game.level.targetAreaPercent  = ld.targetAreaPercent  ?? game.level.targetAreaPercent;
-        game.level.bonusTypes         = ld.bonusTypes         ?? ['tank'];
-        if (Array.isArray(ld.bonusSpawnMilestones))
-            game.level.bonusSpawnMilestones = ld.bonusSpawnMilestones;
-        if (ld.bonusSpawnMaxCleared != null)
-            game.level.bonusSpawnMaxCleared = ld.bonusSpawnMaxCleared;
+        game.level.ballCount         = al.ballCount         != null ? al.ballCount         : (ld.ballCount         ?? game.level.ballCount);
+        game.level.warderCount       = al.warderCount       != null ? al.warderCount       : (ld.warderCount       ?? game.level.warderCount);
+        game.level.targetAreaPercent = al.targetAreaPercent != null ? al.targetAreaPercent : (ld.targetAreaPercent ?? game.level.targetAreaPercent);
+        game.level.bonusTypes        = al.bonusTypes        != null ? al.bonusTypes        : (ld.bonusTypes        ?? ['tank']);
+        const milestones = al.bonusSpawnMilestones != null ? al.bonusSpawnMilestones : ld.bonusSpawnMilestones;
+        if (Array.isArray(milestones)) game.level.bonusSpawnMilestones = milestones;
+        const maxCleared = al.bonusSpawnMaxCleared != null ? al.bonusSpawnMaxCleared : ld.bonusSpawnMaxCleared;
+        if (maxCleared != null) game.level.bonusSpawnMaxCleared = maxCleared;
 
-        // Use game-wide carry_over_speed setting.
-        const carryOver = game.settingsData?.carry_over_speed ?? false;
+        // Use all_levels carry_over_speed if set, otherwise game setting.
+        const carryOver = al.carry_over_speed ?? game.settingsData?.carry_over_speed ?? false;
         if (!carryOver || levelIndex === 1) {
-            game.level.enemySpeed  = ld.enemySpeed  ?? game.level.enemySpeed;
-            if (ld.cursorSpeed != null) game.state.cursorSpeed = ld.cursorSpeed;
+            const configuredSpeeds = _getConfiguredSpeedsForLevel(levelIndex);
+            if (configuredSpeeds.enemySpeed != null) game.level.enemySpeed = configuredSpeeds.enemySpeed;
+            if (configuredSpeeds.cursorSpeed != null) game.state.cursorSpeed = configuredSpeeds.cursorSpeed;
+        } else {
+            // Carry over both base speeds from the previous level state.
+            if (previousEnemySpeed != null) game.level.enemySpeed = previousEnemySpeed;
+            if (previousCursorSpeed != null) game.state.cursorSpeed = previousCursorSpeed;
         }
     } else {
-        game.level.bonusTypes = ['tank'];
+        game.level.ballCount         = al.ballCount         != null ? al.ballCount         : game.level.ballCount;
+        game.level.warderCount       = al.warderCount       != null ? al.warderCount       : game.level.warderCount;
+        game.level.targetAreaPercent = al.targetAreaPercent != null ? al.targetAreaPercent : game.level.targetAreaPercent;
+        game.level.bonusTypes        = al.bonusTypes        != null ? al.bonusTypes        : ['tank'];
+        if (al.bonusSpawnMilestones != null) game.level.bonusSpawnMilestones = al.bonusSpawnMilestones;
+        if (al.bonusSpawnMaxCleared != null) game.level.bonusSpawnMaxCleared = al.bonusSpawnMaxCleared;
+        if (al.enemySpeed  != null) game.level.enemySpeed  = al.enemySpeed;
+        if (al.cursorSpeed != null) game.state.cursorSpeed = al.cursorSpeed;
     }
 
     game.cursorMoveAcc = 0;
@@ -239,6 +256,15 @@ function _initLevelState(levelIndex) {
     game.grid.reset();
 
     game.ui.updateStatus('update');
+}
+
+function _getConfiguredSpeedsForLevel(levelIndex) {
+    const al = game.allLevelsData ?? {};
+    const ld = game.levelsData?.[Math.max(0, levelIndex - 1)] ?? null;
+    return {
+        cursorSpeed: al.cursorSpeed != null ? al.cursorSpeed : (ld?.cursorSpeed ?? null),
+        enemySpeed: al.enemySpeed != null ? al.enemySpeed : (ld?.enemySpeed ?? null),
+    };
 }
 
 function _initCanvasContainer() {
@@ -727,16 +753,17 @@ function _handleFault() {
     // Fault cancels any currently active timed bonus effect immediately.
     _deactivateActiveTimedBonus({ resetPersistentSlowdown: false });
 
-    const loseSpeedOnDeath = !!game.settingsData?.speed_lost_on_death;
+    const al2 = game.allLevelsData ?? {};
+    const loseSpeedOnDeath = al2.speed_lost_on_death != null ? !!al2.speed_lost_on_death : !!game.settingsData?.speed_lost_on_death;
     if (loseSpeedOnDeath) {
-        const carryOver = !!game.settingsData?.carry_over_speed;
+        const carryOver = al2.carry_over_speed != null ? !!al2.carry_over_speed : !!game.settingsData?.carry_over_speed;
         const defaultLevelIdx = carryOver ? 1 : game.state.levelIndex;
-        const defaultLevel = game.levelsData?.[Math.max(0, defaultLevelIdx - 1)] || null;
+        const configuredSpeeds = _getConfiguredSpeedsForLevel(defaultLevelIdx);
 
         game.state.bonusSpeed = 0;
         game.level.enemySlowdown = 0;
-        if (defaultLevel?.cursorSpeed != null) game.state.cursorSpeed = defaultLevel.cursorSpeed;
-        if (defaultLevel?.enemySpeed != null) game.level.enemySpeed = defaultLevel.enemySpeed;
+        if (configuredSpeeds.cursorSpeed != null) game.state.cursorSpeed  = configuredSpeeds.cursorSpeed;
+        if (configuredSpeeds.enemySpeed  != null) game.level.enemySpeed   = configuredSpeeds.enemySpeed;
     }
 
     game.ui.updateStatus('update');
