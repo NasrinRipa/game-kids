@@ -57,6 +57,18 @@
     "levels": [
 
         {
+            "image": "page1.png",
+            "ballCount": 2,
+            "warderCount": 1,
+            "cursorSpeed": 25,
+            "enemySpeed": 15,
+            "targetAreaPercent": 70,
+            "bonusTypes":  [ "sneaky", "tank"],
+            "bonusSpawnMilestones": [0, 0, 0],
+            "bonusSpawnMaxCleared": 80,
+            "none":["freez","speed", "sneaky", "life"]
+        },
+        {
             "image": "pic (1).jpg",
             "ballCount": 2,
             "warderCount": 1,
