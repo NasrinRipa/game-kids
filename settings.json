@@ -51,7 +51,7 @@
         "narrow_sidebar_mark": "#ff0000",
         "narrow_sidebar_show": true,
         "cursor_slow_timer": 150,
-        "intro_image":"pics/intro.png"
+        "intro_image":"pics/cover.png"
 
     },
     "levels": [
