@@ -69,19 +69,7 @@
             "none":["freez","speed", "sneaky", "life"]
         },
         {
-            "image": "pic (1).jpg",
-            "ballCount": 2,
-            "warderCount": 1,
-            "cursorSpeed": 25,
-            "enemySpeed": 15,
-            "targetAreaPercent": 70,
-            "bonusTypes":  [ "sneaky", "tank"],
-            "bonusSpawnMilestones": [0, 0, 0],
-            "bonusSpawnMaxCleared": 80,
-            "none":["freez","speed", "sneaky", "life"]
-        },
-        {
-            "image": "pic (2).jpg",
+            "image": "page2.png",
             "ballCount": 3,
             "warderCount": 1,
             "cursorSpeed": 25,
@@ -93,7 +81,7 @@
             "none":["freez","tank", "speed", "slow", "sneaky"]
         },
         {
-            "image": "pic (3).jpg",
+            "image": "page3.png",
             "ballCount": 3,
             "warderCount": 1,
             "cursorSpeed": 25,
@@ -104,7 +92,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (4).jpg",
+            "image": "page4.png",
             "ballCount": 4,
             "warderCount": 1,
             "cursorSpeed": 25,
@@ -115,7 +103,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (5).jpg",
+            "image": "page5.png",
             "ballCount": 4,
             "warderCount": 1,
             "cursorSpeed": 25,
@@ -126,7 +114,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (6).jpg",
+            "image": "page6.png",
             "ballCount": 5,
             "warderCount": 2,
             "cursorSpeed": 25,
@@ -137,7 +125,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (7).jpg",
+            "image": "page7.png",
             "ballCount": 5,
             "warderCount": 2,
             "cursorSpeed": 25,
@@ -148,7 +136,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (8).jpg",
+            "image": "page8.png",
             "ballCount": 6,
             "warderCount": 2,
             "cursorSpeed": 25,
@@ -159,7 +147,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (9).jpg",
+            "image": "page9.png",
             "ballCount": 6,
             "warderCount": 2,
             "cursorSpeed": 25,
@@ -170,7 +158,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (10).jpg",
+            "image": "page10.png",
             "ballCount": 7,
             "warderCount": 2,
             "cursorSpeed": 25,
@@ -181,7 +169,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (1).jpg",
+            "image": "page11.png",
             "ballCount": 7,
             "warderCount": 2,
             "cursorSpeed": 25,
@@ -192,7 +180,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (2).jpg",
+            "image": "page12.png",
             "ballCount": 8,
             "warderCount": 3,
             "cursorSpeed": 25,
@@ -203,7 +191,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (3).jpg",
+            "image": "page13.png",
             "ballCount": 8,
             "warderCount": 3,
             "cursorSpeed": 25,
@@ -214,7 +202,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (4).jpg",
+            "image": "page14.png",
             "ballCount": 9,
             "warderCount": 3,
             "cursorSpeed": 25,
@@ -225,7 +213,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (5).jpg",
+            "image": "pag15.png",
             "ballCount": 9,
             "warderCount": 3,
             "cursorSpeed": 25,
@@ -236,7 +224,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (6).jpg",
+            "image": "page16.png",
             "ballCount": 10,
             "warderCount": 3,
             "cursorSpeed": 25,
@@ -247,7 +235,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (7).jpg",
+            "image": "pic (1).jpg",
             "ballCount": 10,
             "warderCount": 3,
             "cursorSpeed": 25,
@@ -258,7 +246,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (8).jpg",
+            "image": "pic (2).jpg",
             "ballCount": 11,
             "warderCount": 4,
             "cursorSpeed": 25,
@@ -269,7 +257,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (9).jpg",
+            "image": "pic (3).jpg",
             "ballCount": 11,
             "warderCount": 4,
             "cursorSpeed": 25,
@@ -280,7 +268,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (10).jpg",
+            "image": "pic (4).jpg",
             "ballCount": 12,
             "warderCount": 4,
             "cursorSpeed": 25,
@@ -291,7 +279,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (1).jpg",
+            "image": "pic (5).jpg",
             "ballCount": 12,
             "warderCount": 4,
             "cursorSpeed": 25,
@@ -302,7 +290,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (2).jpg",
+            "image": "pic (6).jpg",
             "ballCount": 13,
             "warderCount": 4,
             "cursorSpeed": 25,
@@ -313,7 +301,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (3).jpg",
+            "image": "pic (7).jpg",
             "ballCount": 13,
             "warderCount": 4,
             "cursorSpeed": 25,
@@ -324,7 +312,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (4).jpg",
+            "image": "pic (8).jpg",
             "ballCount": 14,
             "warderCount": 5,
             "cursorSpeed": 25,
@@ -335,7 +323,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (5).jpg",
+            "image": "pic (9).jpg",
             "ballCount": 14,
             "warderCount": 5,
             "cursorSpeed": 25,
@@ -346,7 +334,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (6).jpg",
+            "image": "pic (10).jpg",
             "ballCount": 15,
             "warderCount": 5,
             "cursorSpeed": 25,
