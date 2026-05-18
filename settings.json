@@ -57,7 +57,7 @@
     "levels": [
 
         {
-            "image": "page1.png",
+            "image": "pic1.jpg",
             "ballCount": 2,
             "warderCount": 1,
             "cursorSpeed": 25,
