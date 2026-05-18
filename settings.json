@@ -69,7 +69,7 @@
             "none":["freez","speed", "sneaky", "life"]
         },
         {
-            "image": "page2.png",
+            "image": "pic2.jpg",
             "ballCount": 3,
             "warderCount": 1,
             "cursorSpeed": 25,
@@ -81,7 +81,7 @@
             "none":["freez","tank", "speed", "slow", "sneaky"]
         },
         {
-            "image": "page3.png",
+            "image": "pic3.jpg",
             "ballCount": 3,
             "warderCount": 1,
             "cursorSpeed": 25,
@@ -92,7 +92,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "page4.png",
+            "image": "pic4.jpg",
             "ballCount": 4,
             "warderCount": 1,
             "cursorSpeed": 25,
@@ -103,7 +103,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "page5.png",
+            "image": "pic5.jpg",
             "ballCount": 4,
             "warderCount": 1,
             "cursorSpeed": 25,
@@ -114,7 +114,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "page6.png",
+            "image": "pic6.jpg",
             "ballCount": 5,
             "warderCount": 2,
             "cursorSpeed": 25,
@@ -125,7 +125,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "page7.png",
+            "image": "pic7.jpg",
             "ballCount": 5,
             "warderCount": 2,
             "cursorSpeed": 25,
@@ -136,7 +136,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "page8.png",
+            "image": "pic8.jpg",
             "ballCount": 6,
             "warderCount": 2,
             "cursorSpeed": 25,
@@ -147,7 +147,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "page9.png",
+            "image": "pic9.jpg",
             "ballCount": 6,
             "warderCount": 2,
             "cursorSpeed": 25,
@@ -158,7 +158,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "page10.png",
+            "image": "pic10.jpg",
             "ballCount": 7,
             "warderCount": 2,
             "cursorSpeed": 25,
@@ -169,7 +169,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "page11.png",
+            "image": "pic11.jpg",
             "ballCount": 7,
             "warderCount": 2,
             "cursorSpeed": 25,
@@ -180,7 +180,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "page12.png",
+            "image": "pic12.jpg",
             "ballCount": 8,
             "warderCount": 3,
             "cursorSpeed": 25,
@@ -191,7 +191,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "page13.png",
+            "image": "pic13.jpg",
             "ballCount": 8,
             "warderCount": 3,
             "cursorSpeed": 25,
@@ -202,7 +202,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "page14.png",
+            "image": "pic14.jpg",
             "ballCount": 9,
             "warderCount": 3,
             "cursorSpeed": 25,
@@ -213,7 +213,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pag15.png",
+            "image": "pic15.jpg",
             "ballCount": 9,
             "warderCount": 3,
             "cursorSpeed": 25,
@@ -224,7 +224,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "page16.png",
+            "image": "pic16.jpg",
             "ballCount": 10,
             "warderCount": 3,
             "cursorSpeed": 25,
@@ -235,7 +235,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (1).jpg",
+            "image": "pic17.jpg",
             "ballCount": 10,
             "warderCount": 3,
             "cursorSpeed": 25,
@@ -246,7 +246,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (2).jpg",
+            "image": "pic18.jpg",
             "ballCount": 11,
             "warderCount": 4,
             "cursorSpeed": 25,
@@ -257,7 +257,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (3).jpg",
+            "image": "pic19.jpg",
             "ballCount": 11,
             "warderCount": 4,
             "cursorSpeed": 25,
@@ -268,7 +268,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (4).jpg",
+            "image": "pic20.jpg",
             "ballCount": 12,
             "warderCount": 4,
             "cursorSpeed": 25,
@@ -279,7 +279,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (5).jpg",
+            "image": "pic21.jpg",
             "ballCount": 12,
             "warderCount": 4,
             "cursorSpeed": 25,
@@ -290,7 +290,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (6).jpg",
+            "image": "pic22.jpg",
             "ballCount": 13,
             "warderCount": 4,
             "cursorSpeed": 25,
@@ -301,7 +301,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (7).jpg",
+            "image": "pic23.jpg",
             "ballCount": 13,
             "warderCount": 4,
             "cursorSpeed": 25,
@@ -312,7 +312,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (8).jpg",
+            "image": "pic24.jpg",
             "ballCount": 14,
             "warderCount": 5,
             "cursorSpeed": 25,
@@ -323,7 +323,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (9).jpg",
+            "image": "pic25.jpg",
             "ballCount": 14,
             "warderCount": 5,
             "cursorSpeed": 25,
@@ -334,7 +334,7 @@
             "bonusSpawnMaxCleared": 80
         },
         {
-            "image": "pic (10).jpg",
+            "image": "pic26.jpg",
             "ballCount": 15,
             "warderCount": 5,
             "cursorSpeed": 25,
